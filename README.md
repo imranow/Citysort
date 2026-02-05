@@ -90,3 +90,40 @@ cd /Users/imran/Documents/Projects/citysort
 ```
 
 Sample docs used by the demo are in `/Users/imran/Documents/Projects/citysort/assets/samples`.
+
+## Push to GitHub
+
+```bash
+cd /Users/imran/Documents/Projects/citysort
+git remote add origin https://github.com/imranow/Citysort.git
+git push -u origin main
+```
+
+`.env` is intentionally excluded from git. Only commit `.env.example`.
+
+## Deploy as a website (Render)
+
+This repo includes `/Users/imran/Documents/Projects/citysort/render.yaml`, so you can deploy with a Render Blueprint.
+
+1. In Render, choose **New +** -> **Blueprint**.
+2. Connect `imranow/Citysort`.
+3. Render will detect `render.yaml`.
+4. Set any required secret env vars in Render dashboard:
+   - `OPENAI_API_KEY` (if using OpenAI classification)
+   - `ANTHROPIC_API_KEY` (if using Anthropic classification)
+   - `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` and `AZURE_DOCUMENT_INTELLIGENCE_API_KEY` (if using Azure OCR)
+5. Deploy. Render provides a public URL.
+
+Default deployment uses local rule-based classification:
+- `CITYSORT_OCR_PROVIDER=local`
+- `CITYSORT_CLASSIFIER_PROVIDER=rules`
+
+## Docker deploy
+
+This repo includes a production Dockerfile at `/Users/imran/Documents/Projects/citysort/Dockerfile`.
+
+```bash
+cd /Users/imran/Documents/Projects/citysort
+docker build -t citysort:latest .
+docker run -p 8000:8000 --env-file .env citysort:latest
+```
