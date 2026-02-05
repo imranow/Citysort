@@ -56,17 +56,19 @@
 
       <section class="panel queues-panel">
         <h2>Department Queues</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Department</th>
-              <th>Total</th>
-              <th>Needs Review</th>
-              <th>Ready</th>
-            </tr>
-          </thead>
-          <tbody id="queue-body"></tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Department</th>
+                <th>Total</th>
+                <th>Needs Review</th>
+                <th>Ready</th>
+              </tr>
+            </thead>
+            <tbody id="queue-body"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel worklist-panel">
@@ -86,19 +88,21 @@
           <label for="filter-search">File Search</label>
           <input id="filter-search" type="text" placeholder="filename..." />
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>File</th>
-              <th>Type</th>
-              <th>Department</th>
-              <th>Status</th>
-              <th>Confidence</th>
-              <th>Review</th>
-            </tr>
-          </thead>
-          <tbody id="docs-body"></tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Type</th>
+                <th>Department</th>
+                <th>Status</th>
+                <th>Confidence</th>
+                <th>Review</th>
+              </tr>
+            </thead>
+            <tbody id="docs-body"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel review-panel" id="review-panel">

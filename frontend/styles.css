@@ -19,6 +19,7 @@ body {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   background: radial-gradient(circle at top right, #e2e9d6 0%, var(--bg) 55%);
   color: var(--ink);
+  overflow-x: hidden;
 }
 
 .hero {
@@ -214,7 +215,7 @@ button:hover {
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0.5rem;
   margin-bottom: 0.75rem;
   align-items: center;
@@ -277,12 +278,26 @@ table {
   font-size: 0.92rem;
 }
 
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.queues-panel .table-scroll table {
+  min-width: 520px;
+}
+
+.worklist-panel .table-scroll table {
+  min-width: 860px;
+}
+
 th,
 td {
   text-align: left;
   border-bottom: 1px solid var(--border);
   padding: 0.55rem 0.4rem;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 tbody tr:hover {
