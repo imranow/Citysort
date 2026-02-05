@@ -4,6 +4,7 @@ const uploadStatus = document.getElementById("upload-status");
 const queueBody = document.getElementById("queue-body");
 const docsBody = document.getElementById("docs-body");
 const refreshButton = document.getElementById("refresh");
+const lastUpdated = document.getElementById("last-updated");
 
 const filterStatus = document.getElementById("filter-status");
 const filterDepartment = document.getElementById("filter-department");
@@ -248,6 +249,14 @@ function percent(value) {
   return `${Math.round(safe * 100)}%`;
 }
 
+function statusBadgeClass(doc) {
+  if (doc.status === "failed") return "status-badge danger";
+  if (doc.requires_review) return "status-badge review";
+  if (doc.status === "approved" || doc.status === "corrected") return "status-badge approved";
+  if (doc.status === "routed") return "status-badge routed";
+  return "status-badge";
+}
+
 function lineList(items) {
   if (!items || !items.length) {
     return "-";
@@ -398,15 +407,21 @@ async function loadDocuments() {
 
   docsBody.innerHTML = items
     .map((doc) => {
-      const statusClass = doc.status === "failed" ? "flag-error" : doc.requires_review ? "flag-review" : "";
       const statusText = doc.requires_review ? `${doc.status} (review)` : doc.status;
+      const confidenceValue = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
+      const confidencePct = Math.round(confidenceValue * 100);
       return `
         <tr>
-          <td>${doc.filename}</td>
-          <td>${doc.doc_type || "-"}</td>
+          <td class="doc-file">${doc.filename}</td>
+          <td><span class="pill">${doc.doc_type || "-"}</span></td>
           <td>${doc.department || "-"}</td>
-          <td class="${statusClass}">${statusText}</td>
-          <td>${percent(doc.confidence)}</td>
+          <td><span class="${statusBadgeClass(doc)}">${statusText}</span></td>
+          <td>
+            <div class="confidence-cell">
+              <span class="confidence-value">${confidencePct}%</span>
+              <span class="confidence-track"><span style="width:${confidencePct}%"></span></span>
+            </div>
+          </td>
           <td><button class="secondary review-btn" data-id="${doc.id}">Open</button></td>
         </tr>
       `;
@@ -503,6 +518,9 @@ function addNewRuleType() {
 
 async function loadAll() {
   await Promise.all([loadAnalytics(), loadQueues(), loadDocuments()]);
+  if (lastUpdated) {
+    lastUpdated.textContent = `Updated: ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
 }
 
 function bindDocumentClicks() {
