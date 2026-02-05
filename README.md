@@ -60,6 +60,18 @@ To enable external providers:
 - OpenAI classifier: set `CITYSORT_CLASSIFIER_PROVIDER=openai` and `OPENAI_API_KEY`
 - Anthropic classifier: set `CITYSORT_CLASSIFIER_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`
 - Optional custom rules file path: `CITYSORT_RULES_PATH` (defaults to `data/document_rules.json`)
+- Confidence gate for auto-routing: `CITYSORT_CONFIDENCE_THRESHOLD` (default `0.82`)
+- Always-human-review types: `CITYSORT_FORCE_REVIEW_DOC_TYPES` (comma-separated)
+
+### Safer AI rollout profile (recommended)
+
+```env
+CITYSORT_OCR_PROVIDER=azure_di
+CITYSORT_CLASSIFIER_PROVIDER=openai
+OPENAI_MODEL=gpt-4o-mini
+CITYSORT_CONFIDENCE_THRESHOLD=0.92
+CITYSORT_FORCE_REVIEW_DOC_TYPES=other,benefits_application,court_filing
+```
 
 ## Run server
 

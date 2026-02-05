@@ -16,7 +16,27 @@ try:
 except Exception:
     pass
 
-CONFIDENCE_THRESHOLD = 0.82
+
+def _env_float(name: str, default: float, *, min_value: float = 0.0, max_value: float = 0.99) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        parsed = float(raw.strip())
+    except ValueError:
+        return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _env_csv_set(name: str) -> set[str]:
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return set()
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+CONFIDENCE_THRESHOLD = _env_float("CITYSORT_CONFIDENCE_THRESHOLD", 0.82)
+FORCE_REVIEW_DOC_TYPES = _env_csv_set("CITYSORT_FORCE_REVIEW_DOC_TYPES")
 
 OCR_PROVIDER = os.getenv("CITYSORT_OCR_PROVIDER", "local").strip().lower()
 CLASSIFIER_PROVIDER = os.getenv("CITYSORT_CLASSIFIER_PROVIDER", "rules").strip().lower()

@@ -10,7 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import CLASSIFIER_PROVIDER, CONFIDENCE_THRESHOLD, OCR_PROVIDER, PROCESSED_DIR, UPLOAD_DIR
+from .config import (
+    CLASSIFIER_PROVIDER,
+    CONFIDENCE_THRESHOLD,
+    FORCE_REVIEW_DOC_TYPES,
+    OCR_PROVIDER,
+    PROCESSED_DIR,
+    UPLOAD_DIR,
+)
 from .db import init_db
 from .pipeline import process_document, route_document
 from .repository import (
@@ -115,6 +122,8 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "ocr_provider": OCR_PROVIDER,
         "classifier_provider": CLASSIFIER_PROVIDER,
+        "confidence_threshold": str(CONFIDENCE_THRESHOLD),
+        "force_review_doc_types": ",".join(sorted(FORCE_REVIEW_DOC_TYPES)),
     }
 
 

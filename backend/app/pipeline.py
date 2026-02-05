@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import CONFIDENCE_THRESHOLD, URGENCY_KEYWORDS
+from .config import CONFIDENCE_THRESHOLD, FORCE_REVIEW_DOC_TYPES, URGENCY_KEYWORDS
 from .providers import try_external_classification, try_external_ocr
 from .rules import get_active_rules
 
@@ -198,6 +198,8 @@ def process_document(*, file_path: str, content_type: Optional[str] = None) -> d
     effective_confidence = max(min(classification_confidence, extraction_confidence) - validation_penalty, 0.0)
 
     requires_review = effective_confidence < CONFIDENCE_THRESHOLD or len(validation_errors) > 0
+    if doc_type.lower() in FORCE_REVIEW_DOC_TYPES:
+        requires_review = True
 
     return {
         "doc_type": doc_type,
