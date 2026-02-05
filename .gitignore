@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+.pytest_cache/
+data/citysort.db
+data/document_rules.json
+data/uploads/*
+data/processed/*
+!.gitkeep

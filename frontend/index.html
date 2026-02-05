@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CitySort AI MVP</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div>
+        <p class="kicker">CitySort AI</p>
+        <h1>Document Intake & Routing Dashboard</h1>
+        <p class="subtitle">
+          Intake, classify, validate, and route city documents with confidence-based human review.
+        </p>
+      </div>
+      <button id="refresh" class="secondary">Refresh Data</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel upload-panel">
+        <h2>Upload Documents</h2>
+        <form id="upload-form">
+          <input
+            id="file-input"
+            name="file"
+            type="file"
+            accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.tiff"
+            multiple
+            required
+          />
+          <button type="submit">Upload & Process</button>
+        </form>
+        <p id="upload-status" class="status"></p>
+      </section>
+
+      <section class="panel metrics metrics-panel">
+        <article>
+          <span>Total</span>
+          <strong id="metric-total">0</strong>
+        </article>
+        <article>
+          <span>Needs Review</span>
+          <strong id="metric-review">0</strong>
+        </article>
+        <article>
+          <span>Routed/Approved</span>
+          <strong id="metric-routed">0</strong>
+        </article>
+        <article>
+          <span>Avg Confidence</span>
+          <strong id="metric-confidence">0%</strong>
+        </article>
+      </section>
+
+      <section class="panel queues-panel">
+        <h2>Department Queues</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Department</th>
+              <th>Total</th>
+              <th>Needs Review</th>
+              <th>Ready</th>
+            </tr>
+          </thead>
+          <tbody id="queue-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel worklist-panel">
+        <h2>Document Worklist</h2>
+        <div class="filters">
+          <label for="filter-status">Status</label>
+          <select id="filter-status">
+            <option value="">All</option>
+            <option value="needs_review">needs_review</option>
+            <option value="routed">routed</option>
+            <option value="approved">approved</option>
+            <option value="corrected">corrected</option>
+            <option value="failed">failed</option>
+          </select>
+          <label for="filter-department">Department</label>
+          <input id="filter-department" type="text" placeholder="e.g. City Clerk" />
+          <label for="filter-search">File Search</label>
+          <input id="filter-search" type="text" placeholder="filename..." />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Type</th>
+              <th>Department</th>
+              <th>Status</th>
+              <th>Confidence</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody id="docs-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel review-panel" id="review-panel">
+        <h2>Human Review</h2>
+        <div class="review-context">
+          <p id="review-selected">Select a document from the worklist.</p>
+          <div class="review-tags">
+            <span id="review-current-status">Status: -</span>
+            <span id="review-current-type">Type: -</span>
+            <span id="review-current-department">Department: -</span>
+            <span id="review-current-confidence">Confidence: -</span>
+          </div>
+        </div>
+
+        <div class="review-columns">
+          <div>
+            <label for="review-missing">Missing Required Fields</label>
+            <pre id="review-missing" class="mono-block">-</pre>
+          </div>
+          <div>
+            <label for="review-errors">Validation Errors</label>
+            <pre id="review-errors" class="mono-block">-</pre>
+          </div>
+        </div>
+
+        <form id="review-form">
+          <input type="hidden" id="review-id" />
+
+          <label for="review-doc-type">Corrected Type</label>
+          <select id="review-doc-type">
+            <option value="">(No change)</option>
+            <option value="building_permit">building_permit</option>
+            <option value="business_license">business_license</option>
+            <option value="foi_request">foi_request</option>
+            <option value="zoning_variance">zoning_variance</option>
+            <option value="complaint">complaint</option>
+            <option value="benefits_application">benefits_application</option>
+            <option value="court_filing">court_filing</option>
+            <option value="other">other</option>
+          </select>
+
+          <label for="review-department">Corrected Department</label>
+          <input id="review-department" type="text" placeholder="Optional" />
+
+          <label for="review-notes">Notes</label>
+          <textarea id="review-notes" rows="3" placeholder="What changed and why?"></textarea>
+
+          <label for="review-fields-json">Corrected Fields (JSON)</label>
+          <textarea id="review-fields-json" rows="7" spellcheck="false">{}</textarea>
+
+          <div class="actions">
+            <button type="submit">Approve</button>
+            <button type="button" id="reject" class="secondary">Keep In Review</button>
+            <button type="button" id="reprocess" class="secondary">Reprocess</button>
+          </div>
+        </form>
+        <label for="review-text-preview">Extracted Text Preview</label>
+        <pre id="review-text-preview" class="mono-block">-</pre>
+
+        <label for="review-audit">Audit Trail (Latest First)</label>
+        <pre id="review-audit" class="mono-block">-</pre>
+        <p id="review-status" class="status"></p>
+      </section>
+
+      <section class="panel rules-panel">
+        <h2>Routing Rules Editor</h2>
+        <p class="subtitle-small">
+          Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new
+          uploads.
+        </p>
+        <p id="rules-meta" class="status">Source: -</p>
+        <div class="actions">
+          <button type="button" id="rules-load" class="secondary">Load Rules</button>
+          <button type="button" id="rules-add" class="secondary">Add Type</button>
+          <button type="button" id="rules-save">Save Rules</button>
+          <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
+        </div>
+
+        <div id="rules-builder" class="rules-builder"></div>
+
+        <details class="rules-advanced">
+          <summary>Advanced JSON Editor</summary>
+          <p class="subtitle-small">
+            Optional. You can edit JSON directly, then apply it back to the form view.
+          </p>
+          <div class="actions">
+            <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
+          </div>
+          <label for="rules-json">Rules JSON</label>
+          <textarea id="rules-json" rows="14" spellcheck="false">{}</textarea>
+        </details>
+        <p id="rules-status" class="status"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pypdf==5.2.0
+pytest==8.3.4
+python-dotenv==1.2.1
