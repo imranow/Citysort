@@ -27,19 +27,19 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 
 ## Key files
 
-- `/Users/imran/Documents/Projects/citysort/backend/app/main.py`: API routes and orchestration
-- `/Users/imran/Documents/Projects/citysort/backend/app/pipeline.py`: pipeline core
-- `/Users/imran/Documents/Projects/citysort/backend/app/providers.py`: Azure/OpenAI/Anthropic integrations
-- `/Users/imran/Documents/Projects/citysort/backend/app/rules.py`: runtime rule loading/validation/persistence
-- `/Users/imran/Documents/Projects/citysort/backend/app/config.py`: environment-based config
-- `/Users/imran/Documents/Projects/citysort/frontend/index.html`: dashboard shell
-- `/Users/imran/Documents/Projects/citysort/frontend/app.js`: dashboard behavior
-- `/Users/imran/Documents/Projects/citysort/scripts/run_demo.sh`: end-to-end demo runner
+- `backend/app/main.py`: API routes and orchestration
+- `backend/app/pipeline.py`: pipeline core
+- `backend/app/providers.py`: Azure/OpenAI/Anthropic integrations
+- `backend/app/rules.py`: runtime rule loading/validation/persistence
+- `backend/app/config.py`: environment-based config
+- `frontend/index.html`: dashboard shell
+- `frontend/app.js`: dashboard behavior
+- `scripts/run_demo.sh`: end-to-end demo runner
 
 ## Setup
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
@@ -48,7 +48,7 @@ pip install -r backend/requirements.txt
 ## Configuration
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 cp .env.example .env
 ```
 
@@ -76,7 +76,7 @@ CITYSORT_FORCE_REVIEW_DOC_TYPES=other,benefits_application,court_filing
 ## Run server
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 source .venv/bin/activate
 uvicorn backend.app.main:app --reload --port 8000
 ```
@@ -87,7 +87,7 @@ Health: [http://localhost:8000/health](http://localhost:8000/health)
 ## Run tests
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 source .venv/bin/activate
 PYTHONPATH=backend pytest backend/tests -q
 ```
@@ -97,16 +97,16 @@ PYTHONPATH=backend pytest backend/tests -q
 This starts the API, uploads sample documents, prints results/analytics/queues, and shuts down the server.
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 ./scripts/run_demo.sh
 ```
 
-Sample docs used by the demo are in `/Users/imran/Documents/Projects/citysort/assets/samples`.
+Sample docs used by the demo are in `assets/samples`.
 
 ## Push to GitHub
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 git remote add origin https://github.com/imranow/Citysort.git
 git push -u origin main
 ```
@@ -115,7 +115,7 @@ git push -u origin main
 
 ## Deploy as a website (Render)
 
-This repo includes `/Users/imran/Documents/Projects/citysort/render.yaml`, so you can deploy with a Render Blueprint.
+This repo includes `render.yaml`, so you can deploy with a Render Blueprint.
 
 1. In Render, choose **New +** -> **Blueprint**.
 2. Connect `imranow/Citysort`.
@@ -132,10 +132,10 @@ Default deployment uses local rule-based classification:
 
 ## Docker deploy
 
-This repo includes a production Dockerfile at `/Users/imran/Documents/Projects/citysort/Dockerfile`.
+This repo includes a production Dockerfile at `Dockerfile`.
 
 ```bash
-cd /Users/imran/Documents/Projects/citysort
+cd citysort
 docker build -t citysort:latest .
 docker run -p 8000:8000 --env-file .env citysort:latest
 ```
