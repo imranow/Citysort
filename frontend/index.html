@@ -7,24 +7,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="bg-grid" aria-hidden="true"></div>
-
     <header class="hero">
       <div class="hero-brand">
         <div class="brand-mark" aria-hidden="true">CS</div>
         <div>
-          <p class="kicker">CitySort Platform</p>
-          <h1>Municipal Intake Command Center</h1>
-          <p class="subtitle">
-            Ingest, classify, validate, and route high-volume city documents with confidence scoring and structured
-            human review.
-          </p>
+          <p class="kicker">CitySort</p>
+          <h1>Municipal Intake Workspace</h1>
+          <p class="subtitle">Classify, validate, route, and review incoming city documents.</p>
         </div>
       </div>
 
@@ -42,7 +37,7 @@
       <section class="panel upload-panel">
         <div class="section-head">
           <h2>Upload Documents</h2>
-          <p>Secure intake pipeline</p>
+          <p>Intake pipeline</p>
         </div>
         <form id="upload-form">
           <input
@@ -61,7 +56,7 @@
       <section class="panel metrics-panel">
         <div class="section-head">
           <h2>Operational Metrics</h2>
-          <p>Live production snapshot</p>
+          <p>Live snapshot</p>
         </div>
         <div class="metrics">
           <article>
@@ -83,10 +78,65 @@
         </div>
       </section>
 
+      <section class="panel db-import-panel">
+        <div class="section-head">
+          <h2>Database Import</h2>
+          <p>Bulk ingest from SQL</p>
+        </div>
+        <form id="db-import-form">
+          <label for="db-url">Database URL</label>
+          <input
+            id="db-url"
+            type="text"
+            placeholder="postgresql://user:pass@host:5432/dbname (also supports sqlite/mysql)"
+            required
+          />
+
+          <label for="db-query">SQL Query (SELECT)</label>
+          <textarea id="db-query" rows="4" spellcheck="false">
+SELECT filename, content, content_type
+FROM documents_to_ingest</textarea
+          >
+
+          <div class="db-import-grid">
+            <div>
+              <label for="db-filename-column">Filename Column</label>
+              <input id="db-filename-column" type="text" value="filename" />
+            </div>
+            <div>
+              <label for="db-content-column">Content Column</label>
+              <input id="db-content-column" type="text" value="content" />
+            </div>
+            <div>
+              <label for="db-path-column">File Path Column (optional)</label>
+              <input id="db-path-column" type="text" placeholder="file_path" />
+            </div>
+            <div>
+              <label for="db-content-type-column">Content-Type Column</label>
+              <input id="db-content-type-column" type="text" value="content_type" />
+            </div>
+            <div>
+              <label for="db-limit">Row Limit</label>
+              <input id="db-limit" type="number" min="1" max="5000" value="500" />
+            </div>
+          </div>
+
+          <label class="check-inline" for="db-process-async">
+            <input id="db-process-async" type="checkbox" />
+            Process asynchronously
+          </label>
+
+          <div class="actions">
+            <button id="db-import-submit" type="submit">Import & Process</button>
+          </div>
+        </form>
+        <p id="db-import-status" class="status"></p>
+      </section>
+
       <section class="panel queues-panel">
         <div class="section-head">
           <h2>Department Queues</h2>
-          <p>Current routing distribution</p>
+          <p>Routing distribution</p>
         </div>
         <div class="table-scroll">
           <table>
@@ -143,7 +193,7 @@
       <section class="panel review-panel" id="review-panel">
         <div class="section-head">
           <h2>Human Review</h2>
-          <p>Decision support and auditability</p>
+          <p>Decision support</p>
         </div>
         <div class="review-context">
           <p id="review-selected">Select a document from the worklist.</p>
@@ -209,7 +259,7 @@
       <section class="panel rules-panel">
         <div class="section-head">
           <h2>Routing Rules Editor</h2>
-          <p>Update policy logic for new uploads</p>
+          <p>Policy logic for new uploads</p>
         </div>
         <p class="subtitle-small">
           Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new

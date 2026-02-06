@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 import shutil
 import uuid
 from pathlib import Path
@@ -18,6 +19,13 @@ from .config import (
     PROCESSED_DIR,
     UPLOAD_DIR,
 )
+from .db_import import (
+    ExternalDatabaseError,
+    coerce_row_content_to_bytes,
+    connect_external_database,
+    fetch_import_rows,
+    get_row_value,
+)
 from .db import init_db
 from .pipeline import process_document, route_document
 from .repository import (
@@ -34,6 +42,8 @@ from .rules import get_active_rules, get_rules_path, reset_rules_to_default, sav
 from .schemas import (
     AnalyticsResponse,
     AuditTrailResponse,
+    DatabaseImportRequest,
+    DatabaseImportResponse,
     DocumentListResponse,
     DocumentResponse,
     QueueResponse,
@@ -111,6 +121,13 @@ def _process_document_by_id(document_id: str, actor: str = "system") -> None:
         )
 
 
+def _coerce_optional_text(value: object | None) -> Optional[str]:
+    if value is None:
+        return None
+    parsed = str(value).strip()
+    return parsed or None
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     init_db()
@@ -182,6 +199,129 @@ async def upload_document(
         raise HTTPException(status_code=500, detail="Unable to load processed document")
 
     return DocumentResponse(**refreshed)
+
+
+@app.post("/api/documents/import/database", response_model=DatabaseImportResponse)
+def import_documents_from_database(
+    payload: DatabaseImportRequest,
+    background_tasks: BackgroundTasks,
+) -> DatabaseImportResponse:
+    try:
+        connection = connect_external_database(payload.database_url)
+    except ExternalDatabaseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    imported_items: list[dict[str, str]] = []
+    errors: list[str] = []
+    processed_sync_count = 0
+    scheduled_async_count = 0
+
+    try:
+        try:
+            rows = fetch_import_rows(connection=connection, query=payload.query, limit=payload.limit)
+        except ExternalDatabaseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        for index, row in enumerate(rows, start=1):
+            try:
+                raw_filename = _coerce_optional_text(get_row_value(row, payload.filename_column))
+                fallback_name = f"db_document_{index}.txt"
+                filename = Path(raw_filename or fallback_name).name or fallback_name
+
+                source_path: Optional[Path] = None
+                if payload.file_path_column:
+                    raw_path_value = _coerce_optional_text(get_row_value(row, payload.file_path_column))
+                    if raw_path_value:
+                        source_path = Path(raw_path_value).expanduser().resolve()
+                        if not source_path.exists() or not source_path.is_file():
+                            raise ValueError(f"Path not found: {source_path}")
+
+                file_bytes: Optional[bytes] = None
+                if source_path is None and payload.content_column:
+                    raw_content = get_row_value(row, payload.content_column)
+                    file_bytes = coerce_row_content_to_bytes(raw_content)
+                    if not file_bytes:
+                        raise ValueError("Content column is empty.")
+
+                if source_path is None and file_bytes is None:
+                    raise ValueError("No usable file content found for this row.")
+
+                raw_content_type = None
+                if payload.content_type_column:
+                    try:
+                        raw_content_type = get_row_value(row, payload.content_type_column)
+                    except KeyError:
+                        raw_content_type = None
+
+                content_type = _coerce_optional_text(raw_content_type) or mimetypes.guess_type(filename)[0]
+
+                document_id = str(uuid.uuid4())
+                safe_filename = f"{document_id}_{filename}"
+                storage_path = UPLOAD_DIR / safe_filename
+
+                if source_path is not None:
+                    shutil.copy2(source_path, storage_path)
+                else:
+                    storage_path.write_bytes(file_bytes or b"")
+
+                create_document(
+                    document={
+                        "id": document_id,
+                        "filename": filename,
+                        "storage_path": str(storage_path),
+                        "source_channel": payload.source_channel,
+                        "content_type": content_type,
+                        "status": "ingested",
+                        "requires_review": False,
+                        "confidence": 0.0,
+                        "doc_type": None,
+                        "department": None,
+                        "urgency": "normal",
+                    }
+                )
+
+                create_audit_event(
+                    document_id=document_id,
+                    action="database_imported",
+                    actor=payload.actor,
+                    details=f"source_channel={payload.source_channel} row={index}",
+                )
+
+                if payload.process_async:
+                    background_tasks.add_task(_process_document_by_id, document_id, payload.actor)
+                    scheduled_async_count += 1
+                else:
+                    _process_document_by_id(document_id, actor=payload.actor)
+                    processed_sync_count += 1
+
+                refreshed = get_document(document_id)
+                if refreshed:
+                    imported_items.append(
+                        {
+                            "id": refreshed["id"],
+                            "filename": refreshed["filename"],
+                            "status": refreshed["status"],
+                        }
+                    )
+                else:
+                    imported_items.append({"id": document_id, "filename": filename, "status": "ingested"})
+
+            except KeyError as exc:
+                missing_column = exc.args[0] if exc.args else "unknown"
+                errors.append(f"Row {index}: Missing expected column '{missing_column}'.")
+            except Exception as exc:  # pragma: no cover - runtime safeguard
+                errors.append(f"Row {index}: {exc}")
+    finally:
+        connection.close()
+
+    return DatabaseImportResponse(
+        imported_count=len(imported_items),
+        processed_sync_count=processed_sync_count,
+        scheduled_async_count=scheduled_async_count,
+        failed_count=len(errors),
+        documents=imported_items,
+        errors=errors[:50],
+    )
 
 
 @app.get("/api/documents", response_model=DocumentListResponse)

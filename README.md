@@ -6,6 +6,7 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 
 - FastAPI backend with SQLite persistence and audit events
 - Upload pipeline with document lifecycle states (`ingested`, `routed`, `needs_review`, `approved`, `corrected`, `failed`)
+- Bulk database import API to ingest documents from SQLite/PostgreSQL/MySQL using a SELECT query
 - OCR provider switch:
   - `local` (native text + PDF parsing)
   - `azure_di` (Azure Document Intelligence)
@@ -102,6 +103,34 @@ cd citysort
 ```
 
 Sample docs used by the demo are in `assets/samples`.
+
+## Bulk import from a database
+
+Use the dashboard **Database Import** panel, or call the API directly:
+
+```bash
+curl -X POST http://localhost:8000/api/documents/import/database \
+  -H "Content-Type: application/json" \
+  -d '{
+    "database_url": "postgresql://user:pass@localhost:5432/files_db",
+    "query": "SELECT filename, content, content_type FROM incoming_files",
+    "filename_column": "filename",
+    "content_column": "content",
+    "content_type_column": "content_type",
+    "source_channel": "database_import",
+    "actor": "ops_user",
+    "process_async": false,
+    "limit": 500
+  }'
+```
+
+Notes:
+- `database_url` supports:
+  - SQLite: `sqlite:///absolute/path/to/files.db` or `/absolute/path/to/files.db`
+  - PostgreSQL: `postgresql://user:pass@host:5432/dbname`
+  - MySQL: `mysql://user:pass@host:3306/dbname`
+- Query must be a single `SELECT`/`WITH ... SELECT` statement.
+- Provide either `content_column` (BLOB/text) or `file_path_column` (path on server).
 
 ## Push to GitHub
 

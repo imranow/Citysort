@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DocumentResponse(BaseModel):
@@ -92,3 +92,37 @@ class RulesConfigResponse(BaseModel):
 class RulesConfigUpdate(BaseModel):
     rules: dict[str, RuleDefinition]
     actor: str = "dashboard_admin"
+
+
+class DatabaseImportRequest(BaseModel):
+    database_url: str = Field(..., description="Database URL (sqlite/postgresql/mysql) or sqlite filesystem path")
+    query: str = Field(..., description="SELECT query that returns file rows")
+    filename_column: str = "filename"
+    content_column: Optional[str] = "content"
+    file_path_column: Optional[str] = None
+    content_type_column: Optional[str] = "content_type"
+    source_channel: str = "database_import"
+    actor: str = "database_connector"
+    process_async: bool = False
+    limit: int = Field(default=500, ge=1, le=5000)
+
+    @model_validator(mode="after")
+    def _validate_source_columns(self) -> "DatabaseImportRequest":
+        if not self.content_column and not self.file_path_column:
+            raise ValueError("Set either content_column or file_path_column.")
+        return self
+
+
+class DatabaseImportDocument(BaseModel):
+    id: str
+    filename: str
+    status: str
+
+
+class DatabaseImportResponse(BaseModel):
+    imported_count: int
+    processed_sync_count: int
+    scheduled_async_count: int
+    failed_count: int
+    documents: list[DatabaseImportDocument] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)

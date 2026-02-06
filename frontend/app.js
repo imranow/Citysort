@@ -19,6 +19,17 @@ const reviewDocType = document.getElementById("review-doc-type");
 const reviewDepartment = document.getElementById("review-department");
 const reviewNotes = document.getElementById("review-notes");
 const reviewFieldsJson = document.getElementById("review-fields-json");
+const dbImportForm = document.getElementById("db-import-form");
+const dbUrlInput = document.getElementById("db-url");
+const dbQueryInput = document.getElementById("db-query");
+const dbFilenameColumnInput = document.getElementById("db-filename-column");
+const dbContentColumnInput = document.getElementById("db-content-column");
+const dbPathColumnInput = document.getElementById("db-path-column");
+const dbContentTypeColumnInput = document.getElementById("db-content-type-column");
+const dbLimitInput = document.getElementById("db-limit");
+const dbProcessAsync = document.getElementById("db-process-async");
+const dbImportStatus = document.getElementById("db-import-status");
+const dbImportSubmit = document.getElementById("db-import-submit");
 
 const reviewSelected = document.getElementById("review-selected");
 const reviewCurrentStatus = document.getElementById("review-current-status");
@@ -298,6 +309,12 @@ function setButtonBusy(button, busyLabel, busy) {
   }
   button.disabled = busy;
   button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
+}
+
+function optionalInputValue(element) {
+  if (!element) return null;
+  const value = String(element.value || "").trim();
+  return value || null;
 }
 
 function auditToText(items) {
@@ -608,6 +625,81 @@ function bindFilters() {
   filterSearch.addEventListener("input", debouncedTrigger);
 }
 
+function bindDatabaseImport() {
+  if (!dbImportForm) return;
+
+  dbImportForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const databaseUrl = optionalInputValue(dbUrlInput);
+    const query = optionalInputValue(dbQueryInput);
+    const filenameColumn = optionalInputValue(dbFilenameColumnInput) || "filename";
+    const contentColumn = optionalInputValue(dbContentColumnInput);
+    const filePathColumn = optionalInputValue(dbPathColumnInput);
+
+    if (!databaseUrl) {
+      dbImportStatus.textContent = "Database URL is required.";
+      return;
+    }
+
+    if (!query) {
+      dbImportStatus.textContent = "SQL query is required.";
+      return;
+    }
+
+    if (!contentColumn && !filePathColumn) {
+      dbImportStatus.textContent = "Set a content column or file path column.";
+      return;
+    }
+
+    const parsedLimit = Number(dbLimitInput?.value || 500);
+    const limit = Math.max(1, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 500, 5000));
+
+    const payload = {
+      database_url: databaseUrl,
+      query,
+      filename_column: filenameColumn,
+      content_column: contentColumn,
+      file_path_column: filePathColumn,
+      content_type_column: optionalInputValue(dbContentTypeColumnInput),
+      source_channel: "database_import_ui",
+      actor: "dashboard_admin",
+      process_async: Boolean(dbProcessAsync?.checked),
+      limit,
+    };
+
+    dbImportStatus.textContent = "Importing from database...";
+    setButtonBusy(dbImportSubmit, "Importing...", true);
+
+    try {
+      const result = await parseJSON(
+        await fetch("/api/documents/import/database", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+      );
+
+      const baseMessage =
+        `Imported ${result.imported_count} row(s). ` +
+        `Failed ${result.failed_count}. ` +
+        `Processed now ${result.processed_sync_count}, scheduled async ${result.scheduled_async_count}.`;
+
+      if (result.errors && result.errors.length) {
+        dbImportStatus.textContent = `${baseMessage} First error: ${result.errors[0]}`;
+      } else {
+        dbImportStatus.textContent = baseMessage;
+      }
+
+      await loadAll();
+    } catch (error) {
+      dbImportStatus.textContent = `Database import failed: ${error.message}`;
+    } finally {
+      setButtonBusy(dbImportSubmit, "Importing...", false);
+    }
+  });
+}
+
 function bindRulesActions() {
   rulesLoad.addEventListener("click", () => {
     loadRulesConfig().catch((error) => {
@@ -813,6 +905,7 @@ refreshButton.addEventListener("click", async () => {
 
 bindFilters();
 bindDocumentClicks();
+bindDatabaseImport();
 bindRulesActions();
 clearReviewSelection("Select a document from the worklist.");
 
