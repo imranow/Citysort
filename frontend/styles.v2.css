@@ -28,7 +28,7 @@ body {
 }
 
 html {
-  font-size: 12.5px;
+  font-size: 13.75px;
 }
 
 body {
@@ -119,7 +119,7 @@ body {
 .sidebar-link {
   color: #d2d9e4;
   text-decoration: none;
-  font-size: 0.71rem;
+  font-size: 0.75rem;
   padding: 0.28rem 0.34rem;
   border-radius: 0.32rem;
   border: 1px solid transparent;
@@ -164,7 +164,7 @@ body {
 
 .kicker {
   margin: 0;
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-soft);
@@ -173,7 +173,7 @@ body {
 
 h1 {
   margin: 0.12rem 0 0.16rem;
-  font-size: 0.98rem;
+  font-size: 1.08rem;
   line-height: 1.2;
   letter-spacing: -0.01em;
   font-weight: 600;
@@ -182,7 +182,7 @@ h1 {
 .subtitle {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   line-height: 1.35;
 }
 
@@ -205,7 +205,7 @@ h1 {
 }
 
 .hero-chip span {
-  font-size: 0.55rem;
+  font-size: 0.59rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--ink-soft);
@@ -213,7 +213,7 @@ h1 {
 }
 
 .hero-chip strong {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 600;
 }
 
@@ -240,7 +240,7 @@ h1 {
 .tab {
   color: #b4bfd0;
   text-decoration: none;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   white-space: nowrap;
   padding: 0.4rem 0.54rem;
   border-radius: 0;
@@ -286,14 +286,14 @@ h1 {
 
 .section-head h2 {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
 .section-head p {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 0.6rem;
+  font-size: 0.65rem;
   font-weight: 500;
 }
 
@@ -319,7 +319,7 @@ h1 {
 .subtitle-small {
   margin: 0 0 0.36rem;
   color: var(--ink-soft);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   line-height: 1.35;
 }
 
@@ -338,7 +338,7 @@ h1 {
 
 .metrics span {
   color: var(--ink-soft);
-  font-size: 0.56rem;
+  font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-weight: 700;
@@ -347,7 +347,7 @@ h1 {
 .metrics strong {
   display: block;
   margin-top: 0.12rem;
-  font-size: 1rem;
+  font-size: 1.08rem;
   line-height: 1.1;
   font-weight: 600;
 }
@@ -358,7 +358,7 @@ form {
 }
 
 label {
-  font-size: 0.63rem;
+  font-size: 0.68rem;
   color: #abb7c9;
   font-weight: 600;
 }
@@ -378,8 +378,8 @@ textarea {
   border: 1px solid var(--line-strong);
   background: #111721;
   color: var(--ink);
-  padding: 0.34rem 0.46rem;
-  font-size: 0.67rem;
+  padding: 0.38rem 0.5rem;
+  font-size: 0.72rem;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -415,7 +415,7 @@ input[type="file"]::file-selector-button {
   background: #1d2532;
   color: #d6deeb;
   padding: 0.18rem 0.34rem;
-  font-size: 0.64rem;
+  font-size: 0.67rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -425,9 +425,9 @@ button {
   border-radius: 0.34rem;
   background: linear-gradient(180deg, var(--primary), var(--primary-strong));
   color: #2a130b;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  padding: 0.28rem 0.54rem;
+  padding: 0.34rem 0.62rem;
   cursor: pointer;
   transition: filter 120ms ease, border-color 120ms ease;
 }
@@ -462,7 +462,7 @@ button:disabled {
   min-height: 1rem;
   margin: 0.14rem 0 0;
   color: #92a0b5;
-  font-size: 0.62rem;
+  font-size: 0.66rem;
   font-weight: 500;
 }
 
@@ -500,7 +500,7 @@ button:disabled {
 .review-context p {
   margin: 0 0 0.26rem;
   font-weight: 600;
-  font-size: 0.71rem;
+  font-size: 0.76rem;
 }
 
 .review-tags {
@@ -516,7 +516,7 @@ button:disabled {
   border: 1px solid #3a424f;
   background: #1e2531;
   padding: 0.08rem 0.3rem;
-  font-size: 0.59rem;
+  font-size: 0.63rem;
   color: #d8e1ef;
   font-weight: 600;
 }
@@ -539,7 +539,7 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
-  font-size: 0.64rem;
+  font-size: 0.68rem;
 }
 
 .rules-builder {
@@ -569,7 +569,7 @@ button:disabled {
 .rule-row .hint {
   margin: 0.1rem 0 0;
   color: #7f8da3;
-  font-size: 0.57rem;
+  font-size: 0.61rem;
 }
 
 .rules-advanced {
@@ -613,7 +613,7 @@ button:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
 }
 
 thead th {
@@ -622,7 +622,7 @@ thead th {
   z-index: 1;
   background: #161d28;
   color: #919fb4;
-  font-size: 0.55rem;
+  font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
@@ -662,7 +662,7 @@ tbody tr.is-selected {
   background: #1f2733;
   padding: 0.06rem 0.3rem;
   color: #d7e2f2;
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   font-weight: 600;
 }
 
@@ -673,7 +673,7 @@ tbody tr.is-selected {
   border: 1px solid #3a4659;
   background: #1c2533;
   padding: 0.06rem 0.3rem;
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   font-weight: 700;
   color: #d5dff0;
 }
@@ -709,14 +709,14 @@ tbody tr.is-selected {
 }
 
 .confidence-value {
-  font-size: 0.58rem;
+  font-size: 0.62rem;
   font-weight: 700;
   color: #ccd7e8;
 }
 
 .confidence-track {
   width: 100%;
-  height: 4px;
+  height: 5px;
   border-radius: 999px;
   background: #283445;
   overflow: hidden;
