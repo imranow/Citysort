@@ -20,7 +20,7 @@
       body {
         margin: 0;
         min-height: 100%;
-        font-size: 13.75px;
+        font-size: 15px;
         background: #080a0f;
         color: #f5f7fb;
         font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
@@ -34,7 +34,7 @@
       .app-shell {
         min-height: 100vh;
         display: grid;
-        grid-template-columns: 238px 1fr;
+        grid-template-columns: 252px 1fr;
       }
 
       .shell-sidebar {
@@ -101,6 +101,10 @@
         border: 1px solid #232a35;
         background: #10131a;
         padding: 0.62rem;
+      }
+
+      .panel.is-page-hidden {
+        display: none;
       }
 
       form {
@@ -206,19 +210,16 @@
 
         <div class="sidebar-group">
           <p class="sidebar-label">Settings</p>
-          <a href="#dashboard" class="sidebar-link active">Ingestion and usage</a>
-          <a href="#" class="sidebar-link">Organizations</a>
-          <a href="#" class="sidebar-link">Members and roles</a>
-          <a href="#" class="sidebar-link">API keys</a>
+          <a href="/?page=overview" class="sidebar-link active" data-page="overview">Ingestion and usage</a>
+          <a href="/?page=upload" class="sidebar-link" data-page="upload">Upload intake</a>
+          <a href="/?page=db-import" class="sidebar-link" data-page="db-import">Database import</a>
+          <a href="/?page=rules" class="sidebar-link" data-page="rules">Routing rules</a>
         </div>
 
         <div class="sidebar-group">
           <p class="sidebar-label">Operations</p>
-          <a href="#" class="sidebar-link">Upload intake</a>
-          <a href="#" class="sidebar-link">Department queues</a>
-          <a href="#" class="sidebar-link">Human review</a>
-          <a href="#" class="sidebar-link">Routing rules</a>
-          <a href="#" class="sidebar-link">Database import</a>
+          <a href="/?page=queues" class="sidebar-link" data-page="queues">Department queues</a>
+          <a href="/?page=review" class="sidebar-link" data-page="review">Human review</a>
         </div>
 
         <div class="sidebar-footer">CitySort AI MVP</div>
@@ -242,17 +243,16 @@
         </header>
 
         <nav class="shell-tabs">
-          <a href="#" class="tab active">Ingestion and usage</a>
-          <a href="#" class="tab">Plans and pricing</a>
-          <a href="#" class="tab">Usage graph</a>
-          <a href="#" class="tab">Queue analytics</a>
-          <a href="#" class="tab">Import limits</a>
-          <a href="#" class="tab">Credits</a>
-          <a href="#" class="tab">Invoices</a>
+          <a href="/?page=overview" class="tab active" data-page="overview">Overview</a>
+          <a href="/?page=upload" class="tab" data-page="upload">Upload intake</a>
+          <a href="/?page=db-import" class="tab" data-page="db-import">Database import</a>
+          <a href="/?page=queues" class="tab" data-page="queues">Queue analytics</a>
+          <a href="/?page=review" class="tab" data-page="review">Human review</a>
+          <a href="/?page=rules" class="tab" data-page="rules">Routing rules</a>
         </nav>
 
         <main class="layout">
-          <section class="panel upload-panel">
+          <section class="panel upload-panel" data-pages="overview upload">
             <div class="section-head">
               <h2>Upload Documents</h2>
               <p>Intake pipeline</p>
@@ -271,7 +271,7 @@
             <p id="upload-status" class="status"></p>
           </section>
 
-          <section class="panel metrics-panel">
+          <section class="panel metrics-panel" data-pages="overview upload">
             <div class="section-head">
               <h2>Operational Metrics</h2>
               <p>Live snapshot</p>
@@ -296,7 +296,7 @@
             </div>
           </section>
 
-          <section class="panel db-import-panel">
+          <section class="panel db-import-panel" data-pages="overview db-import">
             <div class="section-head">
               <h2>Database Import</h2>
               <p>Bulk ingest from SQL</p>
@@ -351,7 +351,7 @@ FROM documents_to_ingest</textarea
             <p id="db-import-status" class="status"></p>
           </section>
 
-          <section class="panel queues-panel">
+          <section class="panel queues-panel" data-pages="overview queues">
             <div class="section-head">
               <h2>Department Queues</h2>
               <p>Routing distribution</p>
@@ -371,7 +371,7 @@ FROM documents_to_ingest</textarea
             </div>
           </section>
 
-          <section class="panel worklist-panel">
+          <section class="panel worklist-panel" data-pages="overview queues">
             <div class="section-head">
               <h2>Document Worklist</h2>
               <p>Most recent 200 records</p>
@@ -408,7 +408,7 @@ FROM documents_to_ingest</textarea
             </div>
           </section>
 
-          <section class="panel review-panel" id="review-panel">
+          <section class="panel review-panel" id="review-panel" data-pages="overview review">
             <div class="section-head">
               <h2>Human Review</h2>
               <p>Decision support</p>
@@ -474,7 +474,7 @@ FROM documents_to_ingest</textarea
             <p id="review-status" class="status"></p>
           </section>
 
-          <section class="panel rules-panel">
+          <section class="panel rules-panel" data-pages="overview rules">
             <div class="section-head">
               <h2>Routing Rules Editor</h2>
               <p>Policy logic for new uploads</p>
@@ -508,6 +508,61 @@ FROM documents_to_ingest</textarea
       </div>
     </div>
 
+    <script>
+      (() => {
+        const pageConfig = {
+          overview: {
+            title: "Ingestion and usage",
+            subtitle: "Classify, validate, route, and review incoming city documents from a single control plane.",
+          },
+          upload: {
+            title: "Upload intake",
+            subtitle: "Submit files for immediate processing and live operational tracking.",
+          },
+          "db-import": {
+            title: "Database import",
+            subtitle: "Run SQL-based bulk ingestion and process rows directly from your source systems.",
+          },
+          queues: {
+            title: "Queue analytics",
+            subtitle: "Monitor routing distribution and worklist throughput across departments.",
+          },
+          review: {
+            title: "Human review",
+            subtitle: "Review low-confidence documents and apply corrections with full audit visibility.",
+          },
+          rules: {
+            title: "Routing rules",
+            subtitle: "Manage classification keywords, required fields, and department mapping rules.",
+          },
+        };
+
+        const requestedPage = (new URLSearchParams(window.location.search).get("page") || "overview").trim().toLowerCase();
+        const activePage = Object.prototype.hasOwnProperty.call(pageConfig, requestedPage) ? requestedPage : "overview";
+
+        const titleEl = document.querySelector(".shell-topbar h1");
+        const subtitleEl = document.querySelector(".shell-topbar .subtitle");
+        const meta = pageConfig[activePage];
+        if (titleEl && meta) titleEl.textContent = meta.title;
+        if (subtitleEl && meta) subtitleEl.textContent = meta.subtitle;
+
+        document.querySelectorAll(".sidebar-link[data-page], .tab[data-page]").forEach((link) => {
+          const isActive = link.dataset.page === activePage;
+          link.classList.toggle("active", isActive);
+          if (isActive) {
+            link.setAttribute("aria-current", "page");
+          } else {
+            link.removeAttribute("aria-current");
+          }
+        });
+
+        document.querySelectorAll(".panel[data-pages]").forEach((panel) => {
+          const pages = (panel.dataset.pages || "").split(/\s+/).filter(Boolean);
+          const isVisible = pages.includes(activePage);
+          panel.classList.toggle("is-page-hidden", !isVisible);
+        });
+      })();
+    </script>
     <script src="/static/app.v2.js"></script>
   </body>
 </html>
