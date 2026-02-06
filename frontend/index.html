@@ -7,29 +7,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <div class="bg-grid" aria-hidden="true"></div>
+
     <header class="hero">
-      <div>
-        <p class="kicker">CitySort AI</p>
-        <h1>Document Intake & Routing Dashboard</h1>
-        <p class="subtitle">
-          Intake, classify, validate, and route city documents with confidence-based human review.
-        </p>
+      <div class="hero-brand">
+        <div class="brand-mark" aria-hidden="true">CS</div>
+        <div>
+          <p class="kicker">CitySort Platform</p>
+          <h1>Municipal Intake Command Center</h1>
+          <p class="subtitle">
+            Ingest, classify, validate, and route high-volume city documents with confidence scoring and structured
+            human review.
+          </p>
+        </div>
       </div>
+
       <div class="hero-tools">
-        <p id="last-updated" class="status">Updated: --</p>
+        <div class="hero-chip">
+          <span>Environment</span>
+          <strong>Operations</strong>
+        </div>
+        <p id="last-updated" class="status hero-updated">Updated: --</p>
         <button id="refresh" class="secondary">Refresh Data</button>
       </div>
     </header>
 
     <main class="layout">
       <section class="panel upload-panel">
-        <h2>Upload Documents</h2>
+        <div class="section-head">
+          <h2>Upload Documents</h2>
+          <p>Secure intake pipeline</p>
+        </div>
         <form id="upload-form">
           <input
             id="file-input"
@@ -44,27 +58,36 @@
         <p id="upload-status" class="status"></p>
       </section>
 
-      <section class="panel metrics metrics-panel">
-        <article>
-          <span>Total</span>
-          <strong id="metric-total">0</strong>
-        </article>
-        <article>
-          <span>Needs Review</span>
-          <strong id="metric-review">0</strong>
-        </article>
-        <article>
-          <span>Routed/Approved</span>
-          <strong id="metric-routed">0</strong>
-        </article>
-        <article>
-          <span>Avg Confidence</span>
-          <strong id="metric-confidence">0%</strong>
-        </article>
+      <section class="panel metrics-panel">
+        <div class="section-head">
+          <h2>Operational Metrics</h2>
+          <p>Live production snapshot</p>
+        </div>
+        <div class="metrics">
+          <article>
+            <span>Total Documents</span>
+            <strong id="metric-total">0</strong>
+          </article>
+          <article>
+            <span>Needs Review</span>
+            <strong id="metric-review">0</strong>
+          </article>
+          <article>
+            <span>Routed / Approved</span>
+            <strong id="metric-routed">0</strong>
+          </article>
+          <article>
+            <span>Average Confidence</span>
+            <strong id="metric-confidence">0%</strong>
+          </article>
+        </div>
       </section>
 
       <section class="panel queues-panel">
-        <h2>Department Queues</h2>
+        <div class="section-head">
+          <h2>Department Queues</h2>
+          <p>Current routing distribution</p>
+        </div>
         <div class="table-scroll">
           <table>
             <thead>
@@ -81,7 +104,10 @@
       </section>
 
       <section class="panel worklist-panel">
-        <h2>Document Worklist</h2>
+        <div class="section-head">
+          <h2>Document Worklist</h2>
+          <p>Most recent 200 records</p>
+        </div>
         <div class="filters">
           <label for="filter-status">Status</label>
           <select id="filter-status">
@@ -115,7 +141,10 @@
       </section>
 
       <section class="panel review-panel" id="review-panel">
-        <h2>Human Review</h2>
+        <div class="section-head">
+          <h2>Human Review</h2>
+          <p>Decision support and auditability</p>
+        </div>
         <div class="review-context">
           <p id="review-selected">Select a document from the worklist.</p>
           <div class="review-tags">
@@ -168,6 +197,7 @@
             <button type="button" id="reprocess" class="secondary">Reprocess</button>
           </div>
         </form>
+
         <label for="review-text-preview">Extracted Text Preview</label>
         <pre id="review-text-preview" class="mono-block">-</pre>
 
@@ -177,7 +207,10 @@
       </section>
 
       <section class="panel rules-panel">
-        <h2>Routing Rules Editor</h2>
+        <div class="section-head">
+          <h2>Routing Rules Editor</h2>
+          <p>Update policy logic for new uploads</p>
+        </div>
         <p class="subtitle-small">
           Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new
           uploads.
@@ -194,9 +227,7 @@
 
         <details class="rules-advanced">
           <summary>Advanced JSON Editor</summary>
-          <p class="subtitle-small">
-            Optional. You can edit JSON directly, then apply it back to the form view.
-          </p>
+          <p class="subtitle-small">Optional. You can edit JSON directly, then apply it back to the form view.</p>
           <div class="actions">
             <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
           </div>

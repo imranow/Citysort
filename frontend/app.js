@@ -39,6 +39,7 @@ const rulesApplyJson = document.getElementById("rules-apply-json");
 const rulesJson = document.getElementById("rules-json");
 const rulesStatus = document.getElementById("rules-status");
 const rulesBuilder = document.getElementById("rules-builder");
+const uploadButton = uploadForm.querySelector('button[type="submit"]');
 
 let selectedDocumentId = "";
 let activeRules = {};
@@ -67,6 +68,14 @@ function parseListInput(value) {
     .split(/[,\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function debounce(fn, delay = 220) {
+  let timeoutId;
+  return (...args) => {
+    window.clearTimeout(timeoutId);
+    timeoutId = window.setTimeout(() => fn(...args), delay);
+  };
 }
 
 function formatListInput(items) {
@@ -272,6 +281,25 @@ function safeDate(value) {
   return date.toLocaleString();
 }
 
+function formatUpdatedAt(dateValue = new Date()) {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(dateValue);
+}
+
+function setButtonBusy(button, busyLabel, busy) {
+  if (!button) return;
+  if (!button.dataset.defaultLabel) {
+    button.dataset.defaultLabel = button.textContent || "";
+  }
+  button.disabled = busy;
+  button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
+}
+
 function auditToText(items) {
   if (!items || !items.length) {
     return "-";
@@ -286,6 +314,20 @@ function auditToText(items) {
       return parts.join(" | ");
     })
     .join("\n");
+}
+
+function markSelectedDocumentRow() {
+  const rows = docsBody.querySelectorAll("tr[data-doc-id]");
+  rows.forEach((row) => {
+    const isSelected = row.dataset.docId === selectedDocumentId;
+    row.classList.toggle("is-selected", isSelected);
+
+    const button = row.querySelector(".review-btn");
+    if (button instanceof HTMLButtonElement) {
+      button.classList.toggle("active", isSelected);
+      button.textContent = isSelected ? "Opened" : "Open";
+    }
+  });
 }
 
 function populateDocTypeOptions(rules) {
@@ -331,6 +373,7 @@ function renderReviewDocument(doc, auditItems) {
 
   reviewAudit.textContent = auditToText(auditItems);
   reviewStatus.textContent = `Reviewing ${doc.filename}`;
+  markSelectedDocumentRow();
 }
 
 function clearReviewSelection(message) {
@@ -349,6 +392,7 @@ function clearReviewSelection(message) {
   reviewErrors.textContent = "-";
   reviewTextPreview.textContent = "-";
   reviewAudit.textContent = "-";
+  markSelectedDocumentRow();
 }
 
 async function loadAnalytics() {
@@ -370,7 +414,7 @@ async function loadQueues() {
     .map(
       (queue) => `
       <tr>
-        <td>${queue.department}</td>
+        <td>${escapeHtml(queue.department || "-")}</td>
         <td>${queue.total}</td>
         <td>${queue.needs_review}</td>
         <td>${queue.ready}</td>
@@ -410,23 +454,30 @@ async function loadDocuments() {
       const statusText = doc.requires_review ? `${doc.status} (review)` : doc.status;
       const confidenceValue = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
       const confidencePct = Math.round(confidenceValue * 100);
+      const safeDocId = escapeHtml(doc.id);
+      const safeFilename = escapeHtml(doc.filename);
+      const safeDocType = escapeHtml(doc.doc_type || "-");
+      const safeDepartment = escapeHtml(doc.department || "-");
+      const safeStatusText = escapeHtml(statusText);
       return `
-        <tr>
-          <td class="doc-file">${doc.filename}</td>
-          <td><span class="pill">${doc.doc_type || "-"}</span></td>
-          <td>${doc.department || "-"}</td>
-          <td><span class="${statusBadgeClass(doc)}">${statusText}</span></td>
+        <tr data-doc-id="${safeDocId}">
+          <td class="doc-file">${safeFilename}</td>
+          <td><span class="pill">${safeDocType}</span></td>
+          <td>${safeDepartment}</td>
+          <td><span class="${statusBadgeClass(doc)}">${safeStatusText}</span></td>
           <td>
             <div class="confidence-cell">
               <span class="confidence-value">${confidencePct}%</span>
               <span class="confidence-track"><span style="width:${confidencePct}%"></span></span>
             </div>
           </td>
-          <td><button class="secondary review-btn" data-id="${doc.id}">Open</button></td>
+          <td><button class="secondary review-btn" data-id="${safeDocId}">Open</button></td>
         </tr>
       `;
     })
     .join("");
+
+  markSelectedDocumentRow();
 }
 
 async function loadRulesConfig() {
@@ -519,7 +570,7 @@ function addNewRuleType() {
 async function loadAll() {
   await Promise.all([loadAnalytics(), loadQueues(), loadDocuments()]);
   if (lastUpdated) {
-    lastUpdated.textContent = `Updated: ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
   }
 }
 
@@ -550,10 +601,11 @@ function bindFilters() {
       uploadStatus.textContent = `Failed to load documents: ${error.message}`;
     });
   };
+  const debouncedTrigger = debounce(trigger, 220);
 
   filterStatus.addEventListener("change", trigger);
-  filterDepartment.addEventListener("input", trigger);
-  filterSearch.addEventListener("input", trigger);
+  filterDepartment.addEventListener("input", debouncedTrigger);
+  filterSearch.addEventListener("input", debouncedTrigger);
 }
 
 function bindRulesActions() {
@@ -604,29 +656,36 @@ uploadForm.addEventListener("submit", async (event) => {
   }
 
   uploadStatus.textContent = "Uploading...";
+  setButtonBusy(uploadButton, "Uploading...", true);
 
-  for (const file of files) {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("source_channel", "upload_portal");
-    formData.append("process_async", "false");
+  try {
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("source_channel", "upload_portal");
+      formData.append("process_async", "false");
 
-    try {
-      await parseJSON(
-        await fetch("/api/documents/upload", {
-          method: "POST",
-          body: formData,
-        }),
-      );
-      uploadStatus.textContent = `Uploaded ${file.name}`;
-    } catch (error) {
-      uploadStatus.textContent = `Upload failed for ${file.name}: ${error.message}`;
-      break;
+      try {
+        await parseJSON(
+          await fetch("/api/documents/upload", {
+            method: "POST",
+            body: formData,
+          }),
+        );
+        uploadStatus.textContent = `Uploaded ${file.name}`;
+      } catch (error) {
+        uploadStatus.textContent = `Upload failed for ${file.name}: ${error.message}`;
+        break;
+      }
     }
-  }
 
-  fileInput.value = "";
-  await loadAll();
+    fileInput.value = "";
+    await loadAll();
+  } catch (error) {
+    uploadStatus.textContent = `Upload flow failed: ${error.message}`;
+  } finally {
+    setButtonBusy(uploadButton, "Uploading...", false);
+  }
 });
 
 reviewForm.addEventListener("submit", async (event) => {
@@ -729,19 +788,26 @@ reprocessButton.addEventListener("click", async () => {
 });
 
 refreshButton.addEventListener("click", async () => {
-  await Promise.all([loadAll(), loadRulesConfig()]);
+  setButtonBusy(refreshButton, "Refreshing...", true);
+  try {
+    await Promise.all([loadAll(), loadRulesConfig()]);
 
-  if (selectedDocumentId) {
-    try {
-      const [doc, audit] = await Promise.all([
-        parseJSON(await fetch(`/api/documents/${selectedDocumentId}`)),
-        parseJSON(await fetch(`/api/documents/${selectedDocumentId}/audit?limit=30`)),
-      ]);
-      renderReviewDocument(doc, audit.items || []);
-    } catch (error) {
-      clearReviewSelection("Previously selected document no longer available.");
-      reviewStatus.textContent = `Failed to refresh selected document: ${error.message}`;
+    if (selectedDocumentId) {
+      try {
+        const [doc, audit] = await Promise.all([
+          parseJSON(await fetch(`/api/documents/${selectedDocumentId}`)),
+          parseJSON(await fetch(`/api/documents/${selectedDocumentId}/audit?limit=30`)),
+        ]);
+        renderReviewDocument(doc, audit.items || []);
+      } catch (error) {
+        clearReviewSelection("Previously selected document no longer available.");
+        reviewStatus.textContent = `Failed to refresh selected document: ${error.message}`;
+      }
     }
+  } catch (error) {
+    uploadStatus.textContent = `Refresh failed: ${error.message}`;
+  } finally {
+    setButtonBusy(refreshButton, "Refreshing...", false);
   }
 });
 
