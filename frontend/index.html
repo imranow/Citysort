@@ -13,280 +13,319 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <header class="hero">
-      <div class="hero-brand">
-        <div class="brand-mark" aria-hidden="true">CS</div>
-        <div>
-          <p class="kicker">CitySort</p>
-          <h1>Municipal Intake Workspace</h1>
-          <p class="subtitle">Classify, validate, route, and review incoming city documents.</p>
+    <div class="app-shell">
+      <aside class="shell-sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark" aria-hidden="true">CS</div>
+          <div>
+            <p class="sidebar-kicker">CitySort</p>
+            <strong>Operations Suite</strong>
+          </div>
         </div>
-      </div>
 
-      <div class="hero-tools">
-        <div class="hero-chip">
-          <span>Environment</span>
-          <strong>Operations</strong>
+        <div class="sidebar-group">
+          <p class="sidebar-label">Settings</p>
+          <a href="#dashboard" class="sidebar-link active">Ingestion and usage</a>
+          <a href="#" class="sidebar-link">Organizations</a>
+          <a href="#" class="sidebar-link">Members and roles</a>
+          <a href="#" class="sidebar-link">API keys</a>
         </div>
-        <p id="last-updated" class="status hero-updated">Updated: --</p>
-        <button id="refresh" class="secondary">Refresh Data</button>
-      </div>
-    </header>
 
-    <main class="layout">
-      <section class="panel upload-panel">
-        <div class="section-head">
-          <h2>Upload Documents</h2>
-          <p>Intake pipeline</p>
+        <div class="sidebar-group">
+          <p class="sidebar-label">Operations</p>
+          <a href="#" class="sidebar-link">Upload intake</a>
+          <a href="#" class="sidebar-link">Department queues</a>
+          <a href="#" class="sidebar-link">Human review</a>
+          <a href="#" class="sidebar-link">Routing rules</a>
+          <a href="#" class="sidebar-link">Database import</a>
         </div>
-        <form id="upload-form">
-          <input
-            id="file-input"
-            name="file"
-            type="file"
-            accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.tiff"
-            multiple
-            required
-          />
-          <button type="submit">Upload & Process</button>
-        </form>
-        <p id="upload-status" class="status"></p>
-      </section>
 
-      <section class="panel metrics-panel">
-        <div class="section-head">
-          <h2>Operational Metrics</h2>
-          <p>Live snapshot</p>
-        </div>
-        <div class="metrics">
-          <article>
-            <span>Total Documents</span>
-            <strong id="metric-total">0</strong>
-          </article>
-          <article>
-            <span>Needs Review</span>
-            <strong id="metric-review">0</strong>
-          </article>
-          <article>
-            <span>Routed / Approved</span>
-            <strong id="metric-routed">0</strong>
-          </article>
-          <article>
-            <span>Average Confidence</span>
-            <strong id="metric-confidence">0%</strong>
-          </article>
-        </div>
-      </section>
+        <div class="sidebar-footer">CitySort AI MVP</div>
+      </aside>
 
-      <section class="panel db-import-panel">
-        <div class="section-head">
-          <h2>Database Import</h2>
-          <p>Bulk ingest from SQL</p>
-        </div>
-        <form id="db-import-form">
-          <label for="db-url">Database URL</label>
-          <input
-            id="db-url"
-            type="text"
-            placeholder="postgresql://user:pass@host:5432/dbname (also supports sqlite/mysql)"
-            required
-          />
+      <div class="shell-main" id="dashboard">
+        <header class="shell-topbar">
+          <div>
+            <p class="kicker">CitySort Platform</p>
+            <h1>Ingestion and usage</h1>
+            <p class="subtitle">Classify, validate, route, and review incoming city documents from a single control plane.</p>
+          </div>
+          <div class="hero-tools">
+            <div class="hero-chip">
+              <span>Workspace</span>
+              <strong>Personal</strong>
+            </div>
+            <p id="last-updated" class="status hero-updated">Updated: --</p>
+            <button id="refresh" class="secondary">Refresh Data</button>
+          </div>
+        </header>
 
-          <label for="db-query">SQL Query (SELECT)</label>
-          <textarea id="db-query" rows="4" spellcheck="false">
+        <nav class="shell-tabs">
+          <a href="#" class="tab active">Ingestion and usage</a>
+          <a href="#" class="tab">Plans and pricing</a>
+          <a href="#" class="tab">Usage graph</a>
+          <a href="#" class="tab">Queue analytics</a>
+          <a href="#" class="tab">Import limits</a>
+          <a href="#" class="tab">Credits</a>
+          <a href="#" class="tab">Invoices</a>
+        </nav>
+
+        <main class="layout">
+          <section class="panel upload-panel">
+            <div class="section-head">
+              <h2>Upload Documents</h2>
+              <p>Intake pipeline</p>
+            </div>
+            <form id="upload-form">
+              <input
+                id="file-input"
+                name="file"
+                type="file"
+                accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.tiff"
+                multiple
+                required
+              />
+              <button type="submit">Upload & Process</button>
+            </form>
+            <p id="upload-status" class="status"></p>
+          </section>
+
+          <section class="panel metrics-panel">
+            <div class="section-head">
+              <h2>Operational Metrics</h2>
+              <p>Live snapshot</p>
+            </div>
+            <div class="metrics">
+              <article>
+                <span>Total Documents</span>
+                <strong id="metric-total">0</strong>
+              </article>
+              <article>
+                <span>Needs Review</span>
+                <strong id="metric-review">0</strong>
+              </article>
+              <article>
+                <span>Routed / Approved</span>
+                <strong id="metric-routed">0</strong>
+              </article>
+              <article>
+                <span>Average Confidence</span>
+                <strong id="metric-confidence">0%</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel db-import-panel">
+            <div class="section-head">
+              <h2>Database Import</h2>
+              <p>Bulk ingest from SQL</p>
+            </div>
+            <form id="db-import-form">
+              <label for="db-url">Database URL</label>
+              <input
+                id="db-url"
+                type="text"
+                placeholder="postgresql://user:pass@host:5432/dbname (also supports sqlite/mysql)"
+                required
+              />
+
+              <label for="db-query">SQL Query (SELECT)</label>
+              <textarea id="db-query" rows="4" spellcheck="false">
 SELECT filename, content, content_type
 FROM documents_to_ingest</textarea
-          >
+              >
 
-          <div class="db-import-grid">
-            <div>
-              <label for="db-filename-column">Filename Column</label>
-              <input id="db-filename-column" type="text" value="filename" />
+              <div class="db-import-grid">
+                <div>
+                  <label for="db-filename-column">Filename Column</label>
+                  <input id="db-filename-column" type="text" value="filename" />
+                </div>
+                <div>
+                  <label for="db-content-column">Content Column</label>
+                  <input id="db-content-column" type="text" value="content" />
+                </div>
+                <div>
+                  <label for="db-path-column">File Path Column (optional)</label>
+                  <input id="db-path-column" type="text" placeholder="file_path" />
+                </div>
+                <div>
+                  <label for="db-content-type-column">Content-Type Column</label>
+                  <input id="db-content-type-column" type="text" value="content_type" />
+                </div>
+                <div>
+                  <label for="db-limit">Row Limit</label>
+                  <input id="db-limit" type="number" min="1" max="5000" value="500" />
+                </div>
+              </div>
+
+              <label class="check-inline" for="db-process-async">
+                <input id="db-process-async" type="checkbox" />
+                Process asynchronously
+              </label>
+
+              <div class="actions">
+                <button id="db-import-submit" type="submit">Import & Process</button>
+              </div>
+            </form>
+            <p id="db-import-status" class="status"></p>
+          </section>
+
+          <section class="panel queues-panel">
+            <div class="section-head">
+              <h2>Department Queues</h2>
+              <p>Routing distribution</p>
             </div>
-            <div>
-              <label for="db-content-column">Content Column</label>
-              <input id="db-content-column" type="text" value="content" />
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Department</th>
+                    <th>Total</th>
+                    <th>Needs Review</th>
+                    <th>Ready</th>
+                  </tr>
+                </thead>
+                <tbody id="queue-body"></tbody>
+              </table>
             </div>
-            <div>
-              <label for="db-path-column">File Path Column (optional)</label>
-              <input id="db-path-column" type="text" placeholder="file_path" />
+          </section>
+
+          <section class="panel worklist-panel">
+            <div class="section-head">
+              <h2>Document Worklist</h2>
+              <p>Most recent 200 records</p>
             </div>
-            <div>
-              <label for="db-content-type-column">Content-Type Column</label>
-              <input id="db-content-type-column" type="text" value="content_type" />
+            <div class="filters">
+              <label for="filter-status">Status</label>
+              <select id="filter-status">
+                <option value="">All</option>
+                <option value="needs_review">needs_review</option>
+                <option value="routed">routed</option>
+                <option value="approved">approved</option>
+                <option value="corrected">corrected</option>
+                <option value="failed">failed</option>
+              </select>
+              <label for="filter-department">Department</label>
+              <input id="filter-department" type="text" placeholder="e.g. City Clerk" />
+              <label for="filter-search">File Search</label>
+              <input id="filter-search" type="text" placeholder="filename..." />
             </div>
-            <div>
-              <label for="db-limit">Row Limit</label>
-              <input id="db-limit" type="number" min="1" max="5000" value="500" />
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Type</th>
+                    <th>Department</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                    <th>Review</th>
+                  </tr>
+                </thead>
+                <tbody id="docs-body"></tbody>
+              </table>
             </div>
-          </div>
+          </section>
 
-          <label class="check-inline" for="db-process-async">
-            <input id="db-process-async" type="checkbox" />
-            Process asynchronously
-          </label>
+          <section class="panel review-panel" id="review-panel">
+            <div class="section-head">
+              <h2>Human Review</h2>
+              <p>Decision support</p>
+            </div>
+            <div class="review-context">
+              <p id="review-selected">Select a document from the worklist.</p>
+              <div class="review-tags">
+                <span id="review-current-status">Status: -</span>
+                <span id="review-current-type">Type: -</span>
+                <span id="review-current-department">Department: -</span>
+                <span id="review-current-confidence">Confidence: -</span>
+              </div>
+            </div>
 
-          <div class="actions">
-            <button id="db-import-submit" type="submit">Import & Process</button>
-          </div>
-        </form>
-        <p id="db-import-status" class="status"></p>
-      </section>
+            <div class="review-columns">
+              <div>
+                <label for="review-missing">Missing Required Fields</label>
+                <pre id="review-missing" class="mono-block">-</pre>
+              </div>
+              <div>
+                <label for="review-errors">Validation Errors</label>
+                <pre id="review-errors" class="mono-block">-</pre>
+              </div>
+            </div>
 
-      <section class="panel queues-panel">
-        <div class="section-head">
-          <h2>Department Queues</h2>
-          <p>Routing distribution</p>
-        </div>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Department</th>
-                <th>Total</th>
-                <th>Needs Review</th>
-                <th>Ready</th>
-              </tr>
-            </thead>
-            <tbody id="queue-body"></tbody>
-          </table>
-        </div>
-      </section>
+            <form id="review-form">
+              <input type="hidden" id="review-id" />
 
-      <section class="panel worklist-panel">
-        <div class="section-head">
-          <h2>Document Worklist</h2>
-          <p>Most recent 200 records</p>
-        </div>
-        <div class="filters">
-          <label for="filter-status">Status</label>
-          <select id="filter-status">
-            <option value="">All</option>
-            <option value="needs_review">needs_review</option>
-            <option value="routed">routed</option>
-            <option value="approved">approved</option>
-            <option value="corrected">corrected</option>
-            <option value="failed">failed</option>
-          </select>
-          <label for="filter-department">Department</label>
-          <input id="filter-department" type="text" placeholder="e.g. City Clerk" />
-          <label for="filter-search">File Search</label>
-          <input id="filter-search" type="text" placeholder="filename..." />
-        </div>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>File</th>
-                <th>Type</th>
-                <th>Department</th>
-                <th>Status</th>
-                <th>Confidence</th>
-                <th>Review</th>
-              </tr>
-            </thead>
-            <tbody id="docs-body"></tbody>
-          </table>
-        </div>
-      </section>
+              <label for="review-doc-type">Corrected Type</label>
+              <select id="review-doc-type">
+                <option value="">(No change)</option>
+                <option value="building_permit">building_permit</option>
+                <option value="business_license">business_license</option>
+                <option value="foi_request">foi_request</option>
+                <option value="zoning_variance">zoning_variance</option>
+                <option value="complaint">complaint</option>
+                <option value="benefits_application">benefits_application</option>
+                <option value="court_filing">court_filing</option>
+                <option value="other">other</option>
+              </select>
 
-      <section class="panel review-panel" id="review-panel">
-        <div class="section-head">
-          <h2>Human Review</h2>
-          <p>Decision support</p>
-        </div>
-        <div class="review-context">
-          <p id="review-selected">Select a document from the worklist.</p>
-          <div class="review-tags">
-            <span id="review-current-status">Status: -</span>
-            <span id="review-current-type">Type: -</span>
-            <span id="review-current-department">Department: -</span>
-            <span id="review-current-confidence">Confidence: -</span>
-          </div>
-        </div>
+              <label for="review-department">Corrected Department</label>
+              <input id="review-department" type="text" placeholder="Optional" />
 
-        <div class="review-columns">
-          <div>
-            <label for="review-missing">Missing Required Fields</label>
-            <pre id="review-missing" class="mono-block">-</pre>
-          </div>
-          <div>
-            <label for="review-errors">Validation Errors</label>
-            <pre id="review-errors" class="mono-block">-</pre>
-          </div>
-        </div>
+              <label for="review-notes">Notes</label>
+              <textarea id="review-notes" rows="3" placeholder="What changed and why?"></textarea>
 
-        <form id="review-form">
-          <input type="hidden" id="review-id" />
+              <label for="review-fields-json">Corrected Fields (JSON)</label>
+              <textarea id="review-fields-json" rows="7" spellcheck="false">{}</textarea>
 
-          <label for="review-doc-type">Corrected Type</label>
-          <select id="review-doc-type">
-            <option value="">(No change)</option>
-            <option value="building_permit">building_permit</option>
-            <option value="business_license">business_license</option>
-            <option value="foi_request">foi_request</option>
-            <option value="zoning_variance">zoning_variance</option>
-            <option value="complaint">complaint</option>
-            <option value="benefits_application">benefits_application</option>
-            <option value="court_filing">court_filing</option>
-            <option value="other">other</option>
-          </select>
+              <div class="actions">
+                <button type="submit">Approve</button>
+                <button type="button" id="reject" class="secondary">Keep In Review</button>
+                <button type="button" id="reprocess" class="secondary">Reprocess</button>
+              </div>
+            </form>
 
-          <label for="review-department">Corrected Department</label>
-          <input id="review-department" type="text" placeholder="Optional" />
+            <label for="review-text-preview">Extracted Text Preview</label>
+            <pre id="review-text-preview" class="mono-block">-</pre>
 
-          <label for="review-notes">Notes</label>
-          <textarea id="review-notes" rows="3" placeholder="What changed and why?"></textarea>
+            <label for="review-audit">Audit Trail (Latest First)</label>
+            <pre id="review-audit" class="mono-block">-</pre>
+            <p id="review-status" class="status"></p>
+          </section>
 
-          <label for="review-fields-json">Corrected Fields (JSON)</label>
-          <textarea id="review-fields-json" rows="7" spellcheck="false">{}</textarea>
+          <section class="panel rules-panel">
+            <div class="section-head">
+              <h2>Routing Rules Editor</h2>
+              <p>Policy logic for new uploads</p>
+            </div>
+            <p class="subtitle-small">
+              Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new
+              uploads.
+            </p>
+            <p id="rules-meta" class="status">Source: -</p>
+            <div class="actions">
+              <button type="button" id="rules-load" class="secondary">Load Rules</button>
+              <button type="button" id="rules-add" class="secondary">Add Type</button>
+              <button type="button" id="rules-save">Save Rules</button>
+              <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
+            </div>
 
-          <div class="actions">
-            <button type="submit">Approve</button>
-            <button type="button" id="reject" class="secondary">Keep In Review</button>
-            <button type="button" id="reprocess" class="secondary">Reprocess</button>
-          </div>
-        </form>
+            <div id="rules-builder" class="rules-builder"></div>
 
-        <label for="review-text-preview">Extracted Text Preview</label>
-        <pre id="review-text-preview" class="mono-block">-</pre>
-
-        <label for="review-audit">Audit Trail (Latest First)</label>
-        <pre id="review-audit" class="mono-block">-</pre>
-        <p id="review-status" class="status"></p>
-      </section>
-
-      <section class="panel rules-panel">
-        <div class="section-head">
-          <h2>Routing Rules Editor</h2>
-          <p>Policy logic for new uploads</p>
-        </div>
-        <p class="subtitle-small">
-          Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new
-          uploads.
-        </p>
-        <p id="rules-meta" class="status">Source: -</p>
-        <div class="actions">
-          <button type="button" id="rules-load" class="secondary">Load Rules</button>
-          <button type="button" id="rules-add" class="secondary">Add Type</button>
-          <button type="button" id="rules-save">Save Rules</button>
-          <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
-        </div>
-
-        <div id="rules-builder" class="rules-builder"></div>
-
-        <details class="rules-advanced">
-          <summary>Advanced JSON Editor</summary>
-          <p class="subtitle-small">Optional. You can edit JSON directly, then apply it back to the form view.</p>
-          <div class="actions">
-            <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
-          </div>
-          <label for="rules-json">Rules JSON</label>
-          <textarea id="rules-json" rows="14" spellcheck="false">{}</textarea>
-        </details>
-        <p id="rules-status" class="status"></p>
-      </section>
-    </main>
+            <details class="rules-advanced">
+              <summary>Advanced JSON Editor</summary>
+              <p class="subtitle-small">Optional. You can edit JSON directly, then apply it back to the form view.</p>
+              <div class="actions">
+                <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
+              </div>
+              <label for="rules-json">Rules JSON</label>
+              <textarea id="rules-json" rows="14" spellcheck="false">{}</textarea>
+            </details>
+            <p id="rules-status" class="status"></p>
+          </section>
+        </main>
+      </div>
+    </div>
 
     <script src="/static/app.js"></script>
   </body>
