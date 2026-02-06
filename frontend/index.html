@@ -10,7 +10,187 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      /* Critical fallback so shell layout remains usable if stale cached CSS is served. */
+      :root {
+        color-scheme: dark;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #080a0f;
+        color: #f5f7fb;
+        font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 238px 1fr;
+      }
+
+      .shell-sidebar {
+        border-right: 1px solid #232a35;
+        background: #090c12;
+        padding: 0.62rem;
+      }
+
+      .sidebar-link {
+        display: block;
+        color: #d2d9e4;
+        padding: 0.28rem 0.34rem;
+        border-radius: 0.32rem;
+      }
+
+      .sidebar-link.active {
+        background: #2a1b16;
+        color: #ffd8cc;
+      }
+
+      .shell-main {
+        padding: 0.62rem;
+      }
+
+      .shell-topbar {
+        border: 1px solid #2f3847;
+        border-radius: 0.48rem;
+        background: #10141d;
+        padding: 0.64rem 0.8rem;
+        display: flex;
+        justify-content: space-between;
+        gap: 0.8rem;
+      }
+
+      .shell-tabs {
+        margin-top: 0.48rem;
+        display: flex;
+        gap: 0.06rem;
+        border-bottom: 1px solid #232a35;
+        overflow-x: auto;
+      }
+
+      .tab {
+        color: #b4bfd0;
+        padding: 0.4rem 0.54rem;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+
+      .tab.active {
+        color: #f6f9ff;
+        border-color: #ff6b3d;
+      }
+
+      .layout {
+        margin-top: 0.48rem;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 0.58rem;
+      }
+
+      .panel {
+        border-radius: 0.5rem;
+        border: 1px solid #232a35;
+        background: #10131a;
+        padding: 0.62rem;
+      }
+
+      form {
+        display: grid;
+        gap: 0.44rem;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border-radius: 0.34rem;
+        border: 1px solid #2f3847;
+        background: #111721;
+        color: #f5f7fb;
+        padding: 0.34rem 0.46rem;
+      }
+
+      button {
+        border: 1px solid #ff8e6d;
+        border-radius: 0.34rem;
+        background: #ff6b3d;
+        color: #2a130b;
+        font-weight: 600;
+        padding: 0.3rem 0.54rem;
+      }
+
+      .secondary {
+        background: #161c27;
+        border-color: #323c4c;
+        color: #d8e1ef;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 0.34rem 0.3rem;
+        border-bottom: 1px solid #232a35;
+      }
+
+      .upload-panel {
+        grid-column: span 4;
+      }
+
+      .metrics-panel {
+        grid-column: span 8;
+      }
+
+      .db-import-panel,
+      .review-panel,
+      .rules-panel {
+        grid-column: span 12;
+      }
+
+      .queues-panel,
+      .worklist-panel {
+        grid-column: span 6;
+      }
+
+      @media (max-width: 1320px) {
+        .upload-panel,
+        .metrics-panel,
+        .queues-panel,
+        .worklist-panel {
+          grid-column: span 12;
+        }
+      }
+
+      @media (max-width: 1040px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .shell-topbar {
+          flex-direction: column;
+        }
+      }
+    </style>
+    <link rel="stylesheet" href="/static/styles.v2.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -327,6 +507,6 @@ FROM documents_to_ingest</textarea
       </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.v2.js"></script>
   </body>
 </html>
