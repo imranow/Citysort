@@ -79,9 +79,7 @@ body {
   margin: 0;
   color: var(--ink);
   font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
-  background:
-    radial-gradient(circle at 14% -16%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 38%),
-    linear-gradient(180deg, var(--bg), var(--bg-2));
+  background: linear-gradient(180deg, var(--bg), var(--bg-2));
 }
 
 a {
@@ -147,6 +145,25 @@ a {
   font-weight: 600;
 }
 
+.sidebar-service {
+  border: 1px solid var(--line);
+  border-radius: 0.56rem;
+  background: var(--surface);
+  padding: 0.48rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.sidebar-home {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.sidebar-service strong {
+  font-size: 1rem;
+  font-weight: 620;
+}
+
 .sidebar-group {
   border: 1px solid var(--line);
   border-radius: 0.56rem;
@@ -202,7 +219,7 @@ a {
 
 .shell-topbar {
   border: 1px solid var(--line);
-  border-radius: 0.68rem;
+  border-radius: 0.42rem;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   padding: 0.84rem 1rem;
@@ -210,6 +227,35 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.topbar-main {
+  min-width: 0;
+}
+
+.topbar-meta {
+  margin-top: 0.54rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.28rem;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 550;
+  padding: 0.18rem 0.38rem;
+}
+
+.meta-chip.accent {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line) 64%);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .kicker {
@@ -242,6 +288,13 @@ h1 {
   gap: 0.38rem;
   justify-items: end;
   text-align: right;
+}
+
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
 }
 
 .hero-chip {
@@ -313,7 +366,7 @@ h1 {
 }
 
 .panel {
-  border-radius: 0.68rem;
+  border-radius: 0.42rem;
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-md);
@@ -379,7 +432,7 @@ h1 {
 
 .metrics article {
   border: 1px solid var(--line);
-  border-radius: 0.56rem;
+  border-radius: 0.4rem;
   background: var(--surface-soft);
   padding: 0.54rem;
 }
@@ -422,7 +475,7 @@ input,
 select,
 textarea {
   width: 100%;
-  border-radius: 0.46rem;
+  border-radius: 0.32rem;
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink);
@@ -459,7 +512,7 @@ input[type="file"] {
 input[type="file"]::file-selector-button {
   margin-right: 0.42rem;
   border: 1px solid var(--line-strong);
-  border-radius: 0.38rem;
+  border-radius: 0.28rem;
   background: var(--surface-muted);
   color: var(--ink);
   padding: 0.22rem 0.44rem;
@@ -470,7 +523,7 @@ input[type="file"]::file-selector-button {
 
 button {
   border: 1px solid color-mix(in srgb, var(--primary-btn-bg) 84%, var(--line) 16%);
-  border-radius: 0.46rem;
+  border-radius: 0.28rem;
   background: var(--primary-btn-bg);
   color: var(--primary-btn-text);
   font-size: 0.8rem;
@@ -637,7 +690,7 @@ button:disabled {
 .table-scroll {
   width: 100%;
   overflow-x: auto;
-  border-radius: 0.5rem;
+  border-radius: 0.36rem;
   border: 1px solid var(--line);
 }
 

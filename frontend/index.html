@@ -84,6 +84,13 @@
         border-radius: 0.38rem;
       }
 
+      .sidebar-service {
+        border: 1px solid var(--line);
+        border-radius: 0.56rem;
+        background: var(--surface);
+        padding: 0.48rem;
+      }
+
       .sidebar-link.active {
         background: var(--accent-soft);
         color: var(--accent);
@@ -95,9 +102,33 @@
 
       .shell-topbar {
         border: 1px solid var(--line);
-        border-radius: 0.56rem;
+        border-radius: 0.42rem;
         background: var(--surface);
         padding: 0.72rem 0.9rem;
+      }
+
+      .topbar-meta {
+        margin-top: 0.54rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.34rem;
+      }
+
+      .meta-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 0.28rem;
+        border: 1px solid var(--line);
+        background: var(--surface-muted);
+        color: var(--ink-soft);
+        font-size: 0.72rem;
+        padding: 0.18rem 0.38rem;
+      }
+
+      .meta-chip.accent {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
       }
 
       .shell-tabs {
@@ -106,6 +137,12 @@
         gap: 0.14rem;
         border-bottom: 1px solid var(--line);
         overflow-x: auto;
+      }
+
+      .topbar-actions {
+        display: flex;
+        gap: 0.4rem;
+        justify-content: flex-end;
       }
 
       .tab {
@@ -128,7 +165,7 @@
       }
 
       .panel {
-        border-radius: 0.56rem;
+        border-radius: 0.42rem;
         border: 1px solid var(--line);
         background: var(--surface);
         padding: 0.75rem;
@@ -185,18 +222,23 @@
           </div>
         </div>
 
-        <div class="sidebar-group">
-          <p class="sidebar-label">Settings</p>
-          <a href="/?page=overview" class="sidebar-link active" data-page="overview">Ingestion and usage</a>
-          <a href="/?page=upload" class="sidebar-link" data-page="upload">Upload intake</a>
-          <a href="/?page=db-import" class="sidebar-link" data-page="db-import">Database import</a>
-          <a href="/?page=rules" class="sidebar-link" data-page="rules">Routing rules</a>
+        <div class="sidebar-service">
+          <a href="/?page=overview" class="sidebar-home">Dashboard</a>
+          <strong>citysort</strong>
         </div>
 
         <div class="sidebar-group">
-          <p class="sidebar-label">Operations</p>
-          <a href="/?page=queues" class="sidebar-link" data-page="queues">Department queues</a>
+          <p class="sidebar-label">Monitor</p>
+          <a href="/?page=overview" class="sidebar-link active" data-page="overview">Events</a>
+          <a href="/?page=queues" class="sidebar-link" data-page="queues">Logs</a>
+          <a href="/?page=upload" class="sidebar-link" data-page="upload">Metrics</a>
+        </div>
+
+        <div class="sidebar-group">
+          <p class="sidebar-label">Manage</p>
+          <a href="/?page=db-import" class="sidebar-link" data-page="db-import">Database</a>
           <a href="/?page=review" class="sidebar-link" data-page="review">Human review</a>
+          <a href="/?page=rules" class="sidebar-link" data-page="rules">Settings</a>
         </div>
 
         <div class="sidebar-footer">CitySort AI MVP</div>
@@ -204,12 +246,21 @@
 
       <div class="shell-main" id="dashboard">
         <header class="shell-topbar">
-          <div>
-            <p class="kicker">CitySort Platform</p>
+          <div class="topbar-main">
+            <p class="kicker">citysort / web service</p>
             <h1>Ingestion and usage</h1>
             <p class="subtitle">Classify, validate, route, and review incoming city documents from a single control plane.</p>
+            <div class="topbar-meta">
+              <span class="meta-chip">Python 3</span>
+              <span class="meta-chip">Free</span>
+              <span class="meta-chip accent">Blueprint managed</span>
+            </div>
           </div>
           <div class="hero-tools">
+            <div class="topbar-actions">
+              <button type="button" class="secondary">Connect</button>
+              <button type="button">Manual Deploy</button>
+            </div>
             <div class="hero-chip">
               <span>Workspace</span>
               <strong>Personal</strong>
@@ -220,12 +271,12 @@
         </header>
 
         <nav class="shell-tabs">
-          <a href="/?page=overview" class="tab active" data-page="overview">Overview</a>
-          <a href="/?page=upload" class="tab" data-page="upload">Upload intake</a>
-          <a href="/?page=db-import" class="tab" data-page="db-import">Database import</a>
-          <a href="/?page=queues" class="tab" data-page="queues">Queue analytics</a>
-          <a href="/?page=review" class="tab" data-page="review">Human review</a>
-          <a href="/?page=rules" class="tab" data-page="rules">Routing rules</a>
+          <a href="/?page=overview" class="tab active" data-page="overview">Events</a>
+          <a href="/?page=queues" class="tab" data-page="queues">Logs</a>
+          <a href="/?page=upload" class="tab" data-page="upload">Metrics</a>
+          <a href="/?page=db-import" class="tab" data-page="db-import">Database</a>
+          <a href="/?page=review" class="tab" data-page="review">Review</a>
+          <a href="/?page=rules" class="tab" data-page="rules">Settings</a>
         </nav>
 
         <main class="layout">
@@ -489,28 +540,28 @@ FROM documents_to_ingest</textarea
       (() => {
         const pageConfig = {
           overview: {
-            title: "Ingestion and usage",
-            subtitle: "Classify, validate, route, and review incoming city documents from a single control plane.",
+            title: "Events",
+            subtitle: "Track document lifecycle activity and deployment-impacting events in one timeline.",
           },
           upload: {
-            title: "Upload intake",
-            subtitle: "Submit files for immediate processing and live operational tracking.",
+            title: "Metrics",
+            subtitle: "Monitor intake throughput, confidence trends, and operational volume at a glance.",
           },
           "db-import": {
-            title: "Database import",
-            subtitle: "Run SQL-based bulk ingestion and process rows directly from your source systems.",
+            title: "Database",
+            subtitle: "Connect your source database and ingest records directly into the processing pipeline.",
           },
           queues: {
-            title: "Queue analytics",
-            subtitle: "Monitor routing distribution and worklist throughput across departments.",
+            title: "Logs",
+            subtitle: "Inspect queue activity and processing output streams for operational visibility.",
           },
           review: {
             title: "Human review",
             subtitle: "Review low-confidence documents and apply corrections with full audit visibility.",
           },
           rules: {
-            title: "Routing rules",
-            subtitle: "Manage classification keywords, required fields, and department mapping rules.",
+            title: "Settings",
+            subtitle: "Manage routing logic, required fields, and document-type classification behavior.",
           },
         };
 
