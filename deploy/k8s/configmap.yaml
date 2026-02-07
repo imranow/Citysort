@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: citysort-config
+data:
+  PORT: "8000"
+  CITYSORT_OCR_PROVIDER: "local"
+  CITYSORT_CLASSIFIER_PROVIDER: "rules"
+  CITYSORT_CONFIDENCE_THRESHOLD: "0.82"
+  CITYSORT_FORCE_REVIEW_DOC_TYPES: "other"

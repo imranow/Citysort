@@ -3,10 +3,11 @@ from __future__ import annotations
 import mimetypes
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,30 +27,53 @@ from .db_import import (
     fetch_import_rows,
     get_row_value,
 )
-from .db import init_db
+from .db import get_connection, init_db
 from .pipeline import process_document, route_document
 from .repository import (
+    count_api_keys,
+    count_invitations,
+    create_api_key,
     create_audit_event,
+    create_deployment,
     create_document,
+    create_invitation,
+    get_latest_deployment,
     get_analytics_snapshot,
     get_document,
     get_queue_snapshot,
+    list_api_keys,
     list_audit_events,
+    list_deployments,
     list_documents,
+    list_invitations,
+    revoke_api_key,
     update_document,
 )
 from .rules import get_active_rules, get_rules_path, reset_rules_to_default, save_rules
 from .schemas import (
     AnalyticsResponse,
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyListResponse,
+    ApiKeyRecord,
     AuditTrailResponse,
+    ConnectivityResponse,
     DatabaseImportRequest,
     DatabaseImportResponse,
+    DeploymentListResponse,
+    DeploymentRecord,
     DocumentListResponse,
     DocumentResponse,
+    InvitationCreateRequest,
+    InvitationCreateResponse,
+    InvitationListResponse,
+    ManualDeploymentRequest,
+    PlatformSummaryResponse,
     QueueResponse,
     RulesConfigResponse,
     RulesConfigUpdate,
     ReviewRequest,
+    ServiceHealth,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -128,6 +152,101 @@ def _coerce_optional_text(value: object | None) -> Optional[str]:
     return parsed or None
 
 
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _database_health() -> ServiceHealth:
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+        return ServiceHealth(name="database", status="ok", configured=True, details="Database connection succeeded.")
+    except Exception as exc:  # pragma: no cover - runtime safeguard
+        return ServiceHealth(name="database", status="error", configured=False, details=str(exc))
+
+
+def _ocr_provider_health() -> ServiceHealth:
+    provider = OCR_PROVIDER
+    if provider == "local":
+        return ServiceHealth(
+            name="ocr",
+            status="ok",
+            configured=True,
+            details="Using local OCR/text extraction pipeline.",
+        )
+
+    if provider == "azure_di":
+        from .config import AZURE_DI_API_KEY, AZURE_DI_ENDPOINT
+
+        configured = bool(AZURE_DI_ENDPOINT and AZURE_DI_API_KEY)
+        return ServiceHealth(
+            name="ocr",
+            status="ok" if configured else "not_configured",
+            configured=configured,
+            details=(
+                "Azure Document Intelligence is configured."
+                if configured
+                else "Missing AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT or AZURE_DOCUMENT_INTELLIGENCE_API_KEY."
+            ),
+        )
+
+    return ServiceHealth(
+        name="ocr",
+        status="unsupported",
+        configured=False,
+        details=f"Unknown OCR provider: {provider}",
+    )
+
+
+def _classifier_provider_health() -> ServiceHealth:
+    provider = CLASSIFIER_PROVIDER
+    if provider == "rules":
+        return ServiceHealth(
+            name="classifier",
+            status="ok",
+            configured=True,
+            details="Using local rule-based classifier.",
+        )
+
+    if provider == "openai":
+        from .config import OPENAI_API_KEY
+
+        configured = bool(OPENAI_API_KEY)
+        return ServiceHealth(
+            name="classifier",
+            status="ok" if configured else "not_configured",
+            configured=configured,
+            details="OpenAI classifier configured." if configured else "Missing OPENAI_API_KEY.",
+        )
+
+    if provider == "anthropic":
+        from .config import ANTHROPIC_API_KEY
+
+        configured = bool(ANTHROPIC_API_KEY)
+        return ServiceHealth(
+            name="classifier",
+            status="ok" if configured else "not_configured",
+            configured=configured,
+            details="Anthropic classifier configured." if configured else "Missing ANTHROPIC_API_KEY.",
+        )
+
+    return ServiceHealth(
+        name="classifier",
+        status="unsupported",
+        configured=False,
+        details=f"Unknown classifier provider: {provider}",
+    )
+
+
+def _connectivity_snapshot() -> ConnectivityResponse:
+    return ConnectivityResponse(
+        database=_database_health(),
+        ocr_provider=_ocr_provider_health(),
+        classifier_provider=_classifier_provider_health(),
+        checked_at=_utcnow_iso(),
+    )
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     init_db()
@@ -142,6 +261,19 @@ def health_check() -> dict[str, str]:
         "confidence_threshold": str(CONFIDENCE_THRESHOLD),
         "force_review_doc_types": ",".join(sorted(FORCE_REVIEW_DOC_TYPES)),
     }
+
+
+@app.get("/livez")
+def livez() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+@app.get("/readyz")
+def readyz() -> dict[str, str]:
+    db_health = _database_health()
+    if db_health.status != "ok":
+        raise HTTPException(status_code=503, detail=db_health.details)
+    return {"status": "ready"}
 
 
 @app.get("/")
@@ -445,3 +577,107 @@ def get_queues() -> QueueResponse:
 def get_analytics() -> AnalyticsResponse:
     snapshot = get_analytics_snapshot()
     return AnalyticsResponse(**snapshot)
+
+
+@app.get("/api/platform/connectivity", response_model=ConnectivityResponse)
+def get_platform_connectivity() -> ConnectivityResponse:
+    return _connectivity_snapshot()
+
+
+@app.post("/api/platform/connectivity/check", response_model=ConnectivityResponse)
+def run_platform_connectivity_check() -> ConnectivityResponse:
+    return _connectivity_snapshot()
+
+
+@app.post("/api/platform/deployments/manual", response_model=DeploymentRecord)
+def run_manual_deployment(payload: ManualDeploymentRequest) -> DeploymentRecord:
+    snapshot = _connectivity_snapshot()
+    is_ready = snapshot.database.status == "ok"
+    status = "completed" if is_ready else "failed"
+    details = (
+        f"database={snapshot.database.status}; "
+        f"ocr={snapshot.ocr_provider.status}; "
+        f"classifier={snapshot.classifier_provider.status}"
+    )
+    created = create_deployment(
+        environment=payload.environment,
+        actor=payload.actor,
+        notes=payload.notes,
+        status=status,
+        details=details,
+    )
+    return DeploymentRecord(**created)
+
+
+@app.get("/api/platform/deployments", response_model=DeploymentListResponse)
+def get_platform_deployments(limit: int = Query(default=20, ge=1, le=100)) -> DeploymentListResponse:
+    items = [DeploymentRecord(**item) for item in list_deployments(limit=limit)]
+    return DeploymentListResponse(items=items)
+
+
+@app.post("/api/platform/invitations", response_model=InvitationCreateResponse)
+def create_platform_invitation(payload: InvitationCreateRequest, request: Request) -> InvitationCreateResponse:
+    invitation, raw_token = create_invitation(
+        email=payload.email.strip().lower(),
+        role=payload.role.strip().lower(),
+        actor=payload.actor,
+        expires_in_days=payload.expires_in_days,
+    )
+    invite_link = f"{str(request.base_url).rstrip('/')}/invite/{raw_token}"
+    return InvitationCreateResponse(
+        invitation=invitation,
+        invite_token=raw_token,
+        invite_link=invite_link,
+    )
+
+
+@app.get("/api/platform/invitations", response_model=InvitationListResponse)
+def get_platform_invitations(
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> InvitationListResponse:
+    items = [item for item in list_invitations(status=status, limit=limit)]
+    return InvitationListResponse(items=items)
+
+
+@app.post("/api/platform/api-keys", response_model=ApiKeyCreateResponse)
+def create_platform_api_key(payload: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
+    key_name = payload.name.strip()
+    if not key_name:
+        raise HTTPException(status_code=400, detail="API key name is required.")
+
+    record, raw_key = create_api_key(name=key_name, actor=payload.actor)
+    return ApiKeyCreateResponse(api_key=record, raw_key=raw_key)
+
+
+@app.get("/api/platform/api-keys", response_model=ApiKeyListResponse)
+def get_platform_api_keys(
+    include_revoked: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> ApiKeyListResponse:
+    items = [item for item in list_api_keys(include_revoked=include_revoked, limit=limit)]
+    return ApiKeyListResponse(items=items)
+
+
+@app.post("/api/platform/api-keys/{key_id}/revoke", response_model=ApiKeyRecord)
+def revoke_platform_api_key(key_id: int) -> ApiKeyRecord:
+    updated = revoke_api_key(key_id=key_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="API key not found.")
+    return ApiKeyRecord(**updated)
+
+
+@app.get("/api/platform/summary", response_model=PlatformSummaryResponse)
+def get_platform_summary() -> PlatformSummaryResponse:
+    connectivity = _connectivity_snapshot()
+    active_api_keys = count_api_keys(status="active")
+    pending_invitations = count_invitations(status="pending")
+    latest_deployment_raw = get_latest_deployment()
+    latest_deployment = DeploymentRecord(**latest_deployment_raw) if latest_deployment_raw else None
+
+    return PlatformSummaryResponse(
+        connectivity=connectivity,
+        active_api_keys=active_api_keys,
+        pending_invitations=pending_invitations,
+        latest_deployment=latest_deployment,
+    )

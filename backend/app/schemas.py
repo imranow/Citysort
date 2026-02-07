@@ -126,3 +126,97 @@ class DatabaseImportResponse(BaseModel):
     failed_count: int
     documents: list[DatabaseImportDocument] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class ServiceHealth(BaseModel):
+    name: str
+    status: str
+    configured: bool
+    details: str
+
+
+class ConnectivityResponse(BaseModel):
+    database: ServiceHealth
+    ocr_provider: ServiceHealth
+    classifier_provider: ServiceHealth
+    checked_at: str
+
+
+class ManualDeploymentRequest(BaseModel):
+    environment: str = "production"
+    actor: str = "dashboard_admin"
+    notes: Optional[str] = None
+
+
+class DeploymentRecord(BaseModel):
+    id: int
+    environment: str
+    status: str
+    actor: str
+    notes: Optional[str] = None
+    details: Optional[str] = None
+    created_at: str
+    finished_at: Optional[str] = None
+
+
+class DeploymentListResponse(BaseModel):
+    items: list[DeploymentRecord] = Field(default_factory=list)
+
+
+class InvitationCreateRequest(BaseModel):
+    email: str
+    role: str = "member"
+    actor: str = "dashboard_admin"
+    expires_in_days: int = Field(default=7, ge=1, le=90)
+
+
+class InvitationRecord(BaseModel):
+    id: int
+    email: str
+    role: str
+    status: str
+    actor: str
+    created_at: str
+    expires_at: str
+    accepted_at: Optional[str] = None
+
+
+class InvitationCreateResponse(BaseModel):
+    invitation: InvitationRecord
+    invite_token: str
+    invite_link: str
+
+
+class InvitationListResponse(BaseModel):
+    items: list[InvitationRecord] = Field(default_factory=list)
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=64)
+    actor: str = "dashboard_admin"
+
+
+class ApiKeyRecord(BaseModel):
+    id: int
+    name: str
+    key_prefix: str
+    status: str
+    actor: str
+    created_at: str
+    revoked_at: Optional[str] = None
+
+
+class ApiKeyCreateResponse(BaseModel):
+    api_key: ApiKeyRecord
+    raw_key: str
+
+
+class ApiKeyListResponse(BaseModel):
+    items: list[ApiKeyRecord] = Field(default_factory=list)
+
+
+class PlatformSummaryResponse(BaseModel):
+    connectivity: ConnectivityResponse
+    active_api_keys: int
+    pending_invitations: int
+    latest_deployment: Optional[DeploymentRecord] = None

@@ -1,10 +1,16 @@
 const uploadForm = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const uploadStatus = document.getElementById("upload-status");
+const platformStatus = document.getElementById("platform-status");
 const queueBody = document.getElementById("queue-body");
 const docsBody = document.getElementById("docs-body");
 const refreshButton = document.getElementById("refresh");
 const lastUpdated = document.getElementById("last-updated");
+const docsButton = document.getElementById("docs-btn");
+const inviteButton = document.getElementById("invite-btn");
+const newKeyButton = document.getElementById("new-key-btn");
+const connectButton = document.getElementById("connect-btn");
+const deployButton = document.getElementById("deploy-btn");
 
 const filterStatus = document.getElementById("filter-status");
 const filterDepartment = document.getElementById("filter-department");
@@ -311,6 +317,12 @@ function setButtonBusy(button, busyLabel, busy) {
   button.textContent = busy ? busyLabel : button.dataset.defaultLabel;
 }
 
+function setPlatformStatus(message, isError = false) {
+  if (!platformStatus) return;
+  platformStatus.textContent = message;
+  platformStatus.classList.toggle("error", Boolean(isError));
+}
+
 function optionalInputValue(element) {
   if (!element) return null;
   const value = String(element.value || "").trim();
@@ -410,6 +422,13 @@ function clearReviewSelection(message) {
   reviewTextPreview.textContent = "-";
   reviewAudit.textContent = "-";
   markSelectedDocumentRow();
+}
+
+function connectivitySummary(data) {
+  const db = data.database?.status || "unknown";
+  const ocr = data.ocr_provider?.status || "unknown";
+  const classifier = data.classifier_provider?.status || "unknown";
+  return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}`;
 }
 
 async function loadAnalytics() {
@@ -591,6 +610,18 @@ async function loadAll() {
   }
 }
 
+async function loadPlatformSummary() {
+  try {
+    const data = await parseJSON(await fetch("/api/platform/summary"));
+    const latestDeploy = data.latest_deployment ? `Last deploy: ${data.latest_deployment.status}` : "No deploys yet";
+    setPlatformStatus(
+      `${connectivitySummary(data.connectivity)} | Active keys: ${data.active_api_keys} | Pending invites: ${data.pending_invitations} | ${latestDeploy}`,
+    );
+  } catch (error) {
+    setPlatformStatus(`Platform summary failed: ${error.message}`, true);
+  }
+}
+
 function bindDocumentClicks() {
   docsBody.addEventListener("click", async (event) => {
     const target = event.target;
@@ -739,6 +770,122 @@ function bindRulesActions() {
   });
 }
 
+function bindPlatformActions() {
+  if (docsButton) {
+    docsButton.addEventListener("click", () => {
+      window.open("/docs", "_blank", "noopener,noreferrer");
+    });
+  }
+
+  if (connectButton) {
+    connectButton.addEventListener("click", async () => {
+      setButtonBusy(connectButton, "Checking...", true);
+      try {
+        const data = await parseJSON(
+          await fetch("/api/platform/connectivity/check", {
+            method: "POST",
+          }),
+        );
+        setPlatformStatus(`Connectivity check complete. ${connectivitySummary(data)}`);
+      } catch (error) {
+        setPlatformStatus(`Connectivity check failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(connectButton, "Checking...", false);
+      }
+    });
+  }
+
+  if (deployButton) {
+    deployButton.addEventListener("click", async () => {
+      setButtonBusy(deployButton, "Deploying...", true);
+      try {
+        const data = await parseJSON(
+          await fetch("/api/platform/deployments/manual", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              environment: "production",
+              actor: "dashboard_admin",
+              notes: "Triggered from dashboard",
+            }),
+          }),
+        );
+        setPlatformStatus(`Manual deployment #${data.id} ${data.status}. ${data.details || ""}`);
+        await loadPlatformSummary();
+      } catch (error) {
+        setPlatformStatus(`Manual deploy failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(deployButton, "Deploying...", false);
+      }
+    });
+  }
+
+  if (inviteButton) {
+    inviteButton.addEventListener("click", async () => {
+      const email = window.prompt("Invite user email:");
+      if (!email) return;
+
+      setButtonBusy(inviteButton, "Inviting...", true);
+      try {
+        const data = await parseJSON(
+          await fetch("/api/platform/invitations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email,
+              role: "member",
+              actor: "dashboard_admin",
+              expires_in_days: 14,
+            }),
+          }),
+        );
+
+        setPlatformStatus(`Invite created for ${data.invitation.email}. Expires ${safeDate(data.invitation.expires_at)}.`);
+        try {
+          await navigator.clipboard.writeText(data.invite_link);
+          window.alert(`Invite link copied to clipboard:\n${data.invite_link}`);
+        } catch {
+          window.prompt("Copy invite link:", data.invite_link);
+        }
+        await loadPlatformSummary();
+      } catch (error) {
+        setPlatformStatus(`Invite failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(inviteButton, "Inviting...", false);
+      }
+    });
+  }
+
+  if (newKeyButton) {
+    newKeyButton.addEventListener("click", async () => {
+      const keyName = window.prompt("API key name:", "dashboard-key");
+      if (!keyName) return;
+
+      setButtonBusy(newKeyButton, "Creating...", true);
+      try {
+        const data = await parseJSON(
+          await fetch("/api/platform/api-keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: keyName,
+              actor: "dashboard_admin",
+            }),
+          }),
+        );
+
+        setPlatformStatus(`API key '${data.api_key.name}' created. Prefix ${data.api_key.key_prefix}.`);
+        window.prompt("Copy API key now (it is shown only once):", data.raw_key);
+        await loadPlatformSummary();
+      } catch (error) {
+        setPlatformStatus(`API key creation failed: ${error.message}`, true);
+      } finally {
+        setButtonBusy(newKeyButton, "Creating...", false);
+      }
+    });
+  }
+}
+
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const files = Array.from(fileInput.files || []);
@@ -882,7 +1029,7 @@ reprocessButton.addEventListener("click", async () => {
 refreshButton.addEventListener("click", async () => {
   setButtonBusy(refreshButton, "Refreshing...", true);
   try {
-    await Promise.all([loadAll(), loadRulesConfig()]);
+    await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]);
 
     if (selectedDocumentId) {
       try {
@@ -907,8 +1054,9 @@ bindFilters();
 bindDocumentClicks();
 bindDatabaseImport();
 bindRulesActions();
+bindPlatformActions();
 clearReviewSelection("Select a document from the worklist.");
 
-Promise.all([loadAll(), loadRulesConfig()]).catch((error) => {
+Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]).catch((error) => {
   uploadStatus.textContent = `Failed to load dashboard: ${error.message}`;
 });

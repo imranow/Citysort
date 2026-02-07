@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: citysort
+  labels:
+    app: citysort
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: citysort
+  template:
+    metadata:
+      labels:
+        app: citysort
+    spec:
+      containers:
+        - name: citysort
+          image: ghcr.io/imranow/citysort:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: citysort-config
+            - secretRef:
+                name: citysort-secrets
+          volumeMounts:
+            - name: citysort-data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 4
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 4
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "750m"
+              memory: "1Gi"
+      volumes:
+        - name: citysort-data
+          persistentVolumeClaim:
+            claimName: citysort-data

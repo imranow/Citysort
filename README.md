@@ -19,11 +19,22 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 - Human review API and dashboard workflow
 - Audit trail API per document (`/api/documents/{id}/audit`)
 - Rules config APIs (`GET/PUT /api/config/rules`, `POST /api/config/rules/reset`)
+- Platform operations APIs for enterprise-style controls:
+  - Connectivity checks (`GET /api/platform/connectivity`, `POST /api/platform/connectivity/check`)
+  - Manual deployments + history (`POST /api/platform/deployments/manual`, `GET /api/platform/deployments`)
+  - Team invitations (`POST /api/platform/invitations`, `GET /api/platform/invitations`)
+  - API key lifecycle (`POST /api/platform/api-keys`, `GET /api/platform/api-keys`, `POST /api/platform/api-keys/{id}/revoke`)
+  - Platform summary (`GET /api/platform/summary`)
 - Web dashboard for upload, queue monitoring, analytics, and review actions
 - Enhanced review pane with extracted fields, validation issues, corrected JSON fields, text preview, and audit history
 - Reprocess action on selected documents to apply latest rules/providers without re-upload
 - Rules editor panel in dashboard to update doc types, keywords, required fields, and routing without code changes
 - Form-based rules builder (add/remove types, comma-separated keywords/required fields) so most users never need JSON
+- Dashboard topbar actions wired end-to-end:
+  - `Connect`: runs provider/database readiness checks
+  - `Manual Deploy`: records and returns deploy result
+  - `Invite`: creates invitation token/link
+  - `New API Key`: issues a new key (shown once)
 - Unit tests for core pipeline logic
 
 ## Key files
@@ -33,8 +44,11 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 - `backend/app/providers.py`: Azure/OpenAI/Anthropic integrations
 - `backend/app/rules.py`: runtime rule loading/validation/persistence
 - `backend/app/config.py`: environment-based config
+- `backend/tests/test_platform_api.py`: platform operations API tests
 - `frontend/index.html`: dashboard shell
-- `frontend/app.js`: dashboard behavior
+- `frontend/app.v2.js`: dashboard behavior
+- `deploy/k8s/`: Kubernetes manifests (namespace, deployment, service, ingress, HPA, config)
+- `docker-compose.yml`: local container orchestration
 - `scripts/run_demo.sh`: end-to-end demo runner
 
 ## Setup
@@ -84,6 +98,8 @@ uvicorn backend.app.main:app --reload --port 8000
 
 Dashboard: [http://localhost:8000](http://localhost:8000)
 Health: [http://localhost:8000/health](http://localhost:8000/health)
+Readiness: [http://localhost:8000/readyz](http://localhost:8000/readyz)
+Liveness: [http://localhost:8000/livez](http://localhost:8000/livez)
 
 ## Run tests
 
@@ -167,4 +183,25 @@ This repo includes a production Dockerfile at `Dockerfile`.
 cd citysort
 docker build -t citysort:latest .
 docker run -p 8000:8000 --env-file .env citysort:latest
+```
+
+Or run with compose (includes volume + healthcheck):
+
+```bash
+cd citysort
+docker compose up --build
+```
+
+## Kubernetes deploy
+
+Kubernetes manifests are provided in `deploy/k8s`.
+
+1. Update the image in `deploy/k8s/deployment.yaml` to your published image.
+2. Set real secrets in `deploy/k8s/secret.example.yaml` (or create your own `Secret`).
+3. Update the host in `deploy/k8s/ingress.yaml`.
+4. Apply:
+
+```bash
+cd citysort
+kubectl apply -k deploy/k8s
 ```

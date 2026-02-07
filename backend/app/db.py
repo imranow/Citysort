@@ -28,6 +28,7 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     ensure_directories()
     with get_connection() as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS documents (
@@ -63,5 +64,84 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES documents(id)
             )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deployments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                environment TEXT NOT NULL,
+                status TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                notes TEXT,
+                details TEXT,
+                created_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS invitations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                accepted_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                key_prefix TEXT NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'active',
+                actor TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                revoked_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_documents_status_updated
+            ON documents (status, updated_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_documents_department_updated
+            ON documents (department, updated_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audit_events_document_id
+            ON audit_events (document_id, id DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_deployments_created_at
+            ON deployments (created_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_invitations_status_created
+            ON invitations (status, created_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_api_keys_status_created
+            ON api_keys (status, created_at DESC)
             """
         )

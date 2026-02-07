@@ -141,6 +141,14 @@
         gap: 0.5rem;
       }
 
+      .platform-status {
+        margin: 0 0 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 0.56rem;
+        padding: 0.5rem 0.62rem;
+        background: var(--surface);
+      }
+
       .shell-topbar {
         border: 1px solid var(--line);
         border-radius: 0.75rem;
@@ -312,8 +320,8 @@
 
         <div class="sidebar-group sidebar-group-muted">
           <p class="sidebar-label">Support</p>
-          <a href="#documentation" class="sidebar-link"><span class="link-icon" aria-hidden="true"></span><span>Documentation</span></a>
-          <a href="#contact" class="sidebar-link"><span class="link-icon" aria-hidden="true"></span><span>Contact Support</span></a>
+          <a href="/docs" class="sidebar-link" target="_blank" rel="noreferrer"><span class="link-icon" aria-hidden="true"></span><span>Documentation</span></a>
+          <a href="mailto:support@citysort.ai" class="sidebar-link"><span class="link-icon" aria-hidden="true"></span><span>Contact Support</span></a>
         </div>
 
         <div class="sidebar-footer">CitySort AI MVP</div>
@@ -325,11 +333,12 @@
             <input type="search" placeholder="Search settings, logs, and records" aria-label="Search dashboard" />
           </div>
           <div class="toolbar-actions">
-            <button type="button" class="secondary">Documentation</button>
-            <button type="button" class="secondary">Invite</button>
-            <button type="button">New</button>
+            <button type="button" class="secondary" id="docs-btn">Documentation</button>
+            <button type="button" class="secondary" id="invite-btn">Invite</button>
+            <button type="button" id="new-key-btn">New API Key</button>
           </div>
         </div>
+        <p id="platform-status" class="status platform-status">Platform ready.</p>
 
         <header class="shell-topbar">
           <div class="topbar-main">
@@ -344,8 +353,8 @@
           </div>
           <div class="hero-tools">
             <div class="topbar-actions">
-              <button type="button" class="secondary">Connect</button>
-              <button type="button">Manual Deploy</button>
+              <button type="button" class="secondary" id="connect-btn">Connect</button>
+              <button type="button" id="deploy-btn">Manual Deploy</button>
             </div>
             <div class="hero-chip">
               <span>Workspace</span>

@@ -301,6 +301,20 @@ a {
   margin-bottom: 0.82rem;
 }
 
+.platform-status {
+  margin: 0 0 0.8rem;
+  padding: 0.52rem 0.62rem;
+  border: 1px solid var(--line);
+  border-radius: 0.56rem;
+  background: var(--surface);
+}
+
+.platform-status.error {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+}
+
 .toolbar-search {
   flex: 1;
 }
