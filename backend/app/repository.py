@@ -6,6 +6,7 @@ import secrets
 from datetime import datetime, timezone
 from datetime import timedelta
 from typing import Any, Optional
+from uuid import uuid4
 
 from .db import get_connection
 
@@ -231,7 +232,7 @@ def get_latest_deployment() -> Optional[dict[str, Any]]:
     with get_connection() as connection:
         row = connection.execute(
             """
-            SELECT id, environment, status, actor, notes, details, created_at, finished_at
+            SELECT id, environment, provider, status, actor, notes, details, external_id, created_at, finished_at
             FROM deployments
             ORDER BY id DESC
             LIMIT 1
@@ -245,7 +246,7 @@ def list_deployments(*, limit: int = 20) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, environment, status, actor, notes, details, created_at, finished_at
+            SELECT id, environment, provider, status, actor, notes, details, external_id, created_at, finished_at
             FROM deployments
             ORDER BY id DESC
             LIMIT ?
@@ -260,9 +261,11 @@ def create_deployment(
     *,
     environment: str,
     actor: str,
+    provider: str = "local",
     notes: Optional[str] = None,
     status: str = "completed",
     details: Optional[str] = None,
+    external_id: Optional[str] = None,
 ) -> dict[str, Any]:
     created_at = utcnow_iso()
     finished_at = created_at if status in {"completed", "failed"} else None
@@ -270,14 +273,14 @@ def create_deployment(
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO deployments (environment, status, actor, notes, details, created_at, finished_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO deployments (environment, provider, status, actor, notes, details, external_id, created_at, finished_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (environment, status, actor, notes, details, created_at, finished_at),
+            (environment, provider, status, actor, notes, details, external_id, created_at, finished_at),
         )
         row = connection.execute(
             """
-            SELECT id, environment, status, actor, notes, details, created_at, finished_at
+            SELECT id, environment, provider, status, actor, notes, details, external_id, created_at, finished_at
             FROM deployments
             WHERE id = ?
             """,
@@ -285,6 +288,53 @@ def create_deployment(
         ).fetchone()
 
     return dict(row)
+
+
+def update_deployment(
+    deployment_id: int,
+    *,
+    status: Optional[str] = None,
+    details: Optional[str] = None,
+    external_id: Optional[str] = None,
+    finished: bool = False,
+) -> Optional[dict[str, Any]]:
+    updates: dict[str, Any] = {}
+    if status is not None:
+        updates["status"] = status
+    if details is not None:
+        updates["details"] = details
+    if external_id is not None:
+        updates["external_id"] = external_id
+    if finished:
+        updates["finished_at"] = utcnow_iso()
+
+    if not updates:
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT id, environment, provider, status, actor, notes, details, external_id, created_at, finished_at
+                FROM deployments
+                WHERE id = ?
+                """,
+                (deployment_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    assignments = ", ".join(f"{key} = ?" for key in updates)
+    values = list(updates.values())
+    values.append(deployment_id)
+    with get_connection() as connection:
+        connection.execute(f"UPDATE deployments SET {assignments} WHERE id = ?", values)
+        row = connection.execute(
+            """
+            SELECT id, environment, provider, status, actor, notes, details, external_id, created_at, finished_at
+            FROM deployments
+            WHERE id = ?
+            """,
+            (deployment_id,),
+        ).fetchone()
+
+    return dict(row) if row else None
 
 
 def _hash_secret(secret_value: str) -> str:
@@ -435,3 +485,271 @@ def count_invitations(*, status: Optional[str] = None) -> int:
         row = connection.execute(query, params).fetchone()
 
     return int(row["total"]) if row else 0
+
+
+def count_users() -> int:
+    with get_connection() as connection:
+        row = connection.execute("SELECT COUNT(*) AS total FROM users").fetchone()
+    return int(row["total"]) if row else 0
+
+
+def create_user(
+    *,
+    email: str,
+    full_name: Optional[str],
+    password_hash: str,
+    role: str,
+    status: str = "active",
+) -> dict[str, Any]:
+    user_id = str(uuid4())
+    now = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO users (id, email, full_name, password_hash, role, status, last_login_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (user_id, email, full_name, password_hash, role, status, now, now),
+        )
+        row = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_user_by_email(email: str, *, include_password_hash: bool = False) -> Optional[dict[str, Any]]:
+    select_fields = "id, email, full_name, role, status, last_login_at, created_at, updated_at"
+    if include_password_hash:
+        select_fields = f"{select_fields}, password_hash"
+
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT {select_fields} FROM users WHERE lower(email) = lower(?)",
+            (email,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_users(*, limit: int = 200) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            FROM users
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_user_login(user_id: str) -> None:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, user_id),
+        )
+
+
+def update_user_role(user_id: str, *, role: str) -> Optional[dict[str, Any]]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
+            (role, now, user_id),
+        )
+        row = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_api_key_by_hash(key_hash: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, name, key_prefix, status, actor, created_at, revoked_at, key_hash
+            FROM api_keys
+            WHERE key_hash = ?
+            """,
+            (key_hash,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_job(
+    *,
+    job_type: str,
+    payload: dict[str, Any],
+    actor: str,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    job_id = str(uuid4())
+    created_at = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO jobs (id, job_type, payload, status, result, error, actor, attempts, max_attempts, worker_id, created_at, started_at, finished_at)
+            VALUES (?, ?, ?, 'queued', NULL, NULL, ?, 0, ?, NULL, ?, NULL, NULL)
+            """,
+            (job_id, job_type, json.dumps(payload), actor, max_attempts, created_at),
+        )
+        row = connection.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+    return _deserialize_job(row) if row else {}
+
+
+def get_job(job_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _deserialize_job(row) if row else None
+
+
+def list_jobs(*, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    query = "SELECT * FROM jobs"
+    params: list[Any] = []
+    if status:
+        query += " WHERE status = ?"
+        params.append(status)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+
+    with get_connection() as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [_deserialize_job(row) for row in rows]
+
+
+def claim_next_job(*, worker_id: str) -> Optional[dict[str, Any]]:
+    started_at = utcnow_iso()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id
+            FROM jobs
+            WHERE status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+
+        job_id = row["id"]
+        updated = connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'running',
+                started_at = ?,
+                worker_id = ?,
+                attempts = attempts + 1,
+                error = NULL
+            WHERE id = ? AND status = 'queued'
+            """,
+            (started_at, worker_id, job_id),
+        )
+        if updated.rowcount != 1:
+            return None
+
+        claimed = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _deserialize_job(claimed) if claimed else None
+
+
+def complete_job(*, job_id: str, result: dict[str, Any]) -> Optional[dict[str, Any]]:
+    finished_at = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'completed',
+                result = ?,
+                finished_at = ?,
+                worker_id = worker_id
+            WHERE id = ?
+            """,
+            (json.dumps(result), finished_at, job_id),
+        )
+        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _deserialize_job(row) if row else None
+
+
+def fail_job(*, job_id: str, error: str) -> Optional[dict[str, Any]]:
+    finished_at = utcnow_iso()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, attempts, max_attempts
+            FROM jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        should_retry = int(row["attempts"]) < int(row["max_attempts"])
+        status = "queued" if should_retry else "failed"
+        started_at = None if should_retry else connection.execute(
+            "SELECT started_at FROM jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()["started_at"]
+
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = ?,
+                error = ?,
+                finished_at = ?,
+                started_at = CASE WHEN ? THEN NULL ELSE started_at END
+            WHERE id = ?
+            """,
+            (status, error, finished_at if not should_retry else None, 1 if should_retry else 0, job_id),
+        )
+        updated = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _deserialize_job(updated) if updated else None
+
+
+def _deserialize_job(row: Any) -> dict[str, Any]:
+    if row is None:
+        return {}
+    record = dict(row)
+    for key in ("payload", "result"):
+        raw = record.get(key)
+        if raw:
+            try:
+                record[key] = json.loads(raw)
+            except Exception:
+                record[key] = {}
+        else:
+            record[key] = {}
+    return record

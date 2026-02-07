@@ -57,9 +57,46 @@ const rulesJson = document.getElementById("rules-json");
 const rulesStatus = document.getElementById("rules-status");
 const rulesBuilder = document.getElementById("rules-builder");
 const uploadButton = uploadForm.querySelector('button[type="submit"]');
+const AUTH_TOKEN_KEY = "citysort_access_token";
+let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
 let selectedDocumentId = "";
 let activeRules = {};
+
+const toastContainer = document.getElementById("toast-container");
+const toastIcons = {
+  success: '<circle cx="8" cy="8" r="6.5"/><path d="M5.5 8.5l2 2L10.5 6"/>',
+  error: '<circle cx="8" cy="8" r="6.5"/><path d="M6 6l4 4M10 6l-4 4"/>',
+  warning: '<path d="M8 2L1.5 13.5h13L8 2z"/><path d="M8 7v3M8 11.5v.5"/>',
+  info: '<circle cx="8" cy="8" r="6.5"/><path d="M8 7v4M8 5v.5"/>',
+};
+
+function showToast(message, type, duration) {
+  if (type === undefined) type = "info";
+  if (duration === undefined) duration = 4500;
+  var toast = document.createElement("div");
+  toast.className = "toast " + type;
+  toast.innerHTML =
+    '<svg class="toast-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' +
+    (toastIcons[type] || toastIcons.info) +
+    "</svg>" +
+    '<span class="toast-body">' + escapeHtml(message) + "</span>" +
+    '<button class="toast-dismiss" aria-label="Dismiss">&times;</button>';
+  toast.querySelector(".toast-dismiss").addEventListener("click", function () {
+    dismissToast(toast);
+  });
+  toastContainer.appendChild(toast);
+  if (duration > 0) {
+    setTimeout(function () { dismissToast(toast); }, duration);
+  }
+}
+
+function dismissToast(toast) {
+  if (toast.classList.contains("is-leaving")) return;
+  toast.classList.add("is-leaving");
+  toast.addEventListener("transitionend", function () { toast.remove(); }, { once: true });
+  setTimeout(function () { toast.remove(); }, 500);
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -266,6 +303,65 @@ async function parseJSON(response) {
   return data;
 }
 
+function setAuthToken(token) {
+  authToken = String(token || "").trim();
+  if (authToken) {
+    window.localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+  } else {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+async function promptLogin() {
+  const email = window.prompt("Sign in email:");
+  if (!email) return false;
+  const password = window.prompt("Password:");
+  if (!password) return false;
+
+  try {
+    const loginData = await parseJSON(
+      await window.fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }),
+    );
+    setAuthToken(loginData.access_token);
+    setPlatformStatus(`Signed in as ${loginData.user.email}.`);
+    return true;
+  } catch (error) {
+    setPlatformStatus(`Login failed: ${error.message}`, true);
+    return false;
+  }
+}
+
+async function apiFetch(input, init = {}, options = {}) {
+  const requestInit = { ...init };
+  const headers = new Headers(requestInit.headers || {});
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+  requestInit.headers = headers;
+
+  let response = await window.fetch(input, requestInit);
+  if (response.status !== 401 || options.skipAuthRetry) {
+    return response;
+  }
+
+  const loggedIn = await promptLogin();
+  if (!loggedIn) {
+    return response;
+  }
+
+  const retryInit = { ...init };
+  const retryHeaders = new Headers(retryInit.headers || {});
+  if (authToken) {
+    retryHeaders.set("Authorization", `Bearer ${authToken}`);
+  }
+  retryInit.headers = retryHeaders;
+  return window.fetch(input, retryInit);
+}
+
 function setText(id, value) {
   document.getElementById(id).textContent = value;
 }
@@ -428,11 +524,12 @@ function connectivitySummary(data) {
   const db = data.database?.status || "unknown";
   const ocr = data.ocr_provider?.status || "unknown";
   const classifier = data.classifier_provider?.status || "unknown";
-  return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}`;
+  const deploy = data.deployment_provider?.status || "unknown";
+  return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}, Deploy: ${deploy}`;
 }
 
 async function loadAnalytics() {
-  const data = await parseJSON(await fetch("/api/analytics"));
+  const data = await parseJSON(await apiFetch("/api/analytics"));
   setText("metric-total", String(data.total_documents));
   setText("metric-review", String(data.needs_review));
   setText("metric-routed", String(data.routed_or_approved));
@@ -440,7 +537,7 @@ async function loadAnalytics() {
 }
 
 async function loadQueues() {
-  const data = await parseJSON(await fetch("/api/queues"));
+  const data = await parseJSON(await apiFetch("/api/queues"));
   if (!data.queues.length) {
     queueBody.innerHTML = "<tr><td colspan='4'>No queues yet.</td></tr>";
     return;
@@ -472,7 +569,7 @@ async function loadDocuments() {
     params.set("department", departmentFilter);
   }
 
-  const data = await parseJSON(await fetch(`/api/documents?${params.toString()}`));
+  const data = await parseJSON(await apiFetch(`/api/documents?${params.toString()}`));
   let items = data.items;
 
   const search = filterSearch.value.trim().toLowerCase();
@@ -517,7 +614,7 @@ async function loadDocuments() {
 }
 
 async function loadRulesConfig() {
-  const data = await parseJSON(await fetch("/api/config/rules"));
+  const data = await parseJSON(await apiFetch("/api/config/rules"));
   activeRules = ensureOtherRule(data.rules || {});
   populateDocTypeOptions(activeRules);
   renderRulesBuilder(activeRules);
@@ -534,7 +631,7 @@ async function saveRulesConfig() {
 
   try {
     const updated = await parseJSON(
-      await fetch("/api/config/rules", {
+      await apiFetch("/api/config/rules", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rules: parsed, actor: "dashboard_admin" }),
@@ -556,7 +653,7 @@ async function saveRulesConfig() {
 async function resetRulesConfig() {
   try {
     const updated = await parseJSON(
-      await fetch("/api/config/rules/reset", {
+      await apiFetch("/api/config/rules/reset", {
         method: "POST",
       }),
     );
@@ -612,7 +709,7 @@ async function loadAll() {
 
 async function loadPlatformSummary() {
   try {
-    const data = await parseJSON(await fetch("/api/platform/summary"));
+    const data = await parseJSON(await apiFetch("/api/platform/summary"));
     const latestDeploy = data.latest_deployment ? `Last deploy: ${data.latest_deployment.status}` : "No deploys yet";
     setPlatformStatus(
       `${connectivitySummary(data.connectivity)} | Active keys: ${data.active_api_keys} | Pending invites: ${data.pending_invitations} | ${latestDeploy}`,
@@ -633,8 +730,8 @@ function bindDocumentClicks() {
 
     try {
       const [doc, audit] = await Promise.all([
-        parseJSON(await fetch(`/api/documents/${docId}`)),
-        parseJSON(await fetch(`/api/documents/${docId}/audit?limit=30`)),
+        parseJSON(await apiFetch(`/api/documents/${docId}`)),
+        parseJSON(await apiFetch(`/api/documents/${docId}/audit?limit=30`)),
       ]);
       renderReviewDocument(doc, audit.items || []);
     } catch (error) {
@@ -704,7 +801,7 @@ function bindDatabaseImport() {
 
     try {
       const result = await parseJSON(
-        await fetch("/api/documents/import/database", {
+        await apiFetch("/api/documents/import/database", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -782,7 +879,7 @@ function bindPlatformActions() {
       setButtonBusy(connectButton, "Checking...", true);
       try {
         const data = await parseJSON(
-          await fetch("/api/platform/connectivity/check", {
+          await apiFetch("/api/platform/connectivity/check", {
             method: "POST",
           }),
         );
@@ -800,7 +897,7 @@ function bindPlatformActions() {
       setButtonBusy(deployButton, "Deploying...", true);
       try {
         const data = await parseJSON(
-          await fetch("/api/platform/deployments/manual", {
+          await apiFetch("/api/platform/deployments/manual", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -828,7 +925,7 @@ function bindPlatformActions() {
       setButtonBusy(inviteButton, "Inviting...", true);
       try {
         const data = await parseJSON(
-          await fetch("/api/platform/invitations", {
+          await apiFetch("/api/platform/invitations", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -864,7 +961,7 @@ function bindPlatformActions() {
       setButtonBusy(newKeyButton, "Creating...", true);
       try {
         const data = await parseJSON(
-          await fetch("/api/platform/api-keys", {
+          await apiFetch("/api/platform/api-keys", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -906,14 +1003,16 @@ uploadForm.addEventListener("submit", async (event) => {
 
       try {
         await parseJSON(
-          await fetch("/api/documents/upload", {
+          await apiFetch("/api/documents/upload", {
             method: "POST",
             body: formData,
           }),
         );
         uploadStatus.textContent = `Uploaded ${file.name}`;
+        showToast("Uploaded " + file.name, "success");
       } catch (error) {
         uploadStatus.textContent = `Upload failed for ${file.name}: ${error.message}`;
+        showToast("Upload failed for " + file.name + ": " + error.message, "error");
         break;
       }
     }
@@ -959,19 +1058,21 @@ reviewForm.addEventListener("submit", async (event) => {
 
   try {
     const updated = await parseJSON(
-      await fetch(`/api/documents/${reviewId.value}/review`, {
+      await apiFetch(`/api/documents/${reviewId.value}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
     );
     reviewStatus.textContent = "Review saved as approved.";
+    showToast("Review saved as approved", "success");
     await loadAll();
 
-    const audit = await parseJSON(await fetch(`/api/documents/${updated.id}/audit?limit=30`));
+    const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
     renderReviewDocument(updated, audit.items || []);
   } catch (error) {
     reviewStatus.textContent = `Review failed: ${error.message}`;
+    showToast("Review failed: " + error.message, "error");
   }
 });
 
@@ -989,16 +1090,17 @@ rejectButton.addEventListener("click", async () => {
 
   try {
     const updated = await parseJSON(
-      await fetch(`/api/documents/${reviewId.value}/review`, {
+      await apiFetch(`/api/documents/${reviewId.value}/review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }),
     );
     reviewStatus.textContent = "Document kept in review queue.";
+    showToast("Document kept in review queue", "info");
     await loadAll();
 
-    const audit = await parseJSON(await fetch(`/api/documents/${updated.id}/audit?limit=30`));
+    const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
     renderReviewDocument(updated, audit.items || []);
   } catch (error) {
     reviewStatus.textContent = `Action failed: ${error.message}`;
@@ -1013,13 +1115,13 @@ reprocessButton.addEventListener("click", async () => {
 
   try {
     const updated = await parseJSON(
-      await fetch(`/api/documents/${reviewId.value}/reprocess`, {
+      await apiFetch(`/api/documents/${reviewId.value}/reprocess`, {
         method: "POST",
       }),
     );
     reviewStatus.textContent = "Document reprocessed with latest rules/providers.";
     await loadAll();
-    const audit = await parseJSON(await fetch(`/api/documents/${updated.id}/audit?limit=30`));
+    const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
     renderReviewDocument(updated, audit.items || []);
   } catch (error) {
     reviewStatus.textContent = `Reprocess failed: ${error.message}`;
@@ -1034,8 +1136,8 @@ refreshButton.addEventListener("click", async () => {
     if (selectedDocumentId) {
       try {
         const [doc, audit] = await Promise.all([
-          parseJSON(await fetch(`/api/documents/${selectedDocumentId}`)),
-          parseJSON(await fetch(`/api/documents/${selectedDocumentId}/audit?limit=30`)),
+          parseJSON(await apiFetch(`/api/documents/${selectedDocumentId}`)),
+          parseJSON(await apiFetch(`/api/documents/${selectedDocumentId}/audit?limit=30`)),
         ]);
         renderReviewDocument(doc, audit.items || []);
       } catch (error) {

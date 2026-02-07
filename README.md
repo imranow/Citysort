@@ -7,6 +7,7 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 - FastAPI backend with SQLite persistence and audit events
 - Upload pipeline with document lifecycle states (`ingested`, `routed`, `needs_review`, `approved`, `corrected`, `failed`)
 - Bulk database import API to ingest documents from SQLite/PostgreSQL/MySQL using a SELECT query
+- Durable async job queue with worker thread + persisted job state in SQLite
 - OCR provider switch:
   - `local` (native text + PDF parsing)
   - `azure_di` (Azure Document Intelligence)
@@ -19,12 +20,20 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 - Human review API and dashboard workflow
 - Audit trail API per document (`/api/documents/{id}/audit`)
 - Rules config APIs (`GET/PUT /api/config/rules`, `POST /api/config/rules/reset`)
+- Auth/RBAC APIs:
+  - bootstrap first admin (`POST /api/auth/bootstrap`)
+  - login (`POST /api/auth/login`)
+  - current user (`GET /api/auth/me`)
+  - admin user management (`GET/POST /api/auth/users`, `PATCH /api/auth/users/{id}/role`)
 - Platform operations APIs for enterprise-style controls:
   - Connectivity checks (`GET /api/platform/connectivity`, `POST /api/platform/connectivity/check`)
   - Manual deployments + history (`POST /api/platform/deployments/manual`, `GET /api/platform/deployments`)
   - Team invitations (`POST /api/platform/invitations`, `GET /api/platform/invitations`)
   - API key lifecycle (`POST /api/platform/api-keys`, `GET /api/platform/api-keys`, `POST /api/platform/api-keys/{id}/revoke`)
   - Platform summary (`GET /api/platform/summary`)
+- Job APIs:
+  - list jobs (`GET /api/jobs`)
+  - job detail (`GET /api/jobs/{id}`)
 - Web dashboard for upload, queue monitoring, analytics, and review actions
 - Enhanced review pane with extracted fields, validation issues, corrected JSON fields, text preview, and audit history
 - Reprocess action on selected documents to apply latest rules/providers without re-upload
@@ -42,6 +51,10 @@ Runnable MVP for the CitySort plan: ingest, extract, classify, validate, and rou
 - `backend/app/main.py`: API routes and orchestration
 - `backend/app/pipeline.py`: pipeline core
 - `backend/app/providers.py`: Azure/OpenAI/Anthropic integrations
+- `backend/app/auth.py`: token auth, password hashing, RBAC enforcement
+- `backend/app/jobs.py`: durable background worker
+- `backend/app/deployments.py`: local/Render/GitHub deploy triggers
+- `backend/app/document_tasks.py`: reusable document-processing task logic
 - `backend/app/rules.py`: runtime rule loading/validation/persistence
 - `backend/app/config.py`: environment-based config
 - `backend/tests/test_platform_api.py`: platform operations API tests
@@ -77,6 +90,17 @@ To enable external providers:
 - Optional custom rules file path: `CITYSORT_RULES_PATH` (defaults to `data/document_rules.json`)
 - Confidence gate for auto-routing: `CITYSORT_CONFIDENCE_THRESHOLD` (default `0.82`)
 - Always-human-review types: `CITYSORT_FORCE_REVIEW_DOC_TYPES` (comma-separated)
+- Auth and RBAC:
+  - `CITYSORT_REQUIRE_AUTH=true` enables authentication checks
+  - `CITYSORT_AUTH_SECRET` signs user access tokens
+- Deployment provider:
+  - `CITYSORT_DEPLOY_PROVIDER=local|render|github`
+  - `CITYSORT_DEPLOY_COMMAND` for local deploy execution
+  - `CITYSORT_RENDER_*` or `CITYSORT_GITHUB_*` to trigger external deploy pipelines
+- Durable worker:
+  - `CITYSORT_WORKER_ENABLED=true`
+  - `CITYSORT_WORKER_POLL_INTERVAL_SECONDS`
+  - `CITYSORT_WORKER_MAX_ATTEMPTS`
 
 ### Safer AI rollout profile (recommended)
 
@@ -100,6 +124,28 @@ Dashboard: [http://localhost:8000](http://localhost:8000)
 Health: [http://localhost:8000/health](http://localhost:8000/health)
 Readiness: [http://localhost:8000/readyz](http://localhost:8000/readyz)
 Liveness: [http://localhost:8000/livez](http://localhost:8000/livez)
+
+## Bootstrap auth (recommended before production)
+
+Create first admin (only works when there are no existing users):
+
+```bash
+curl -X POST http://localhost:8000/api/auth/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@citysort.local",
+    "password": "ChangeMe12345!",
+    "full_name": "CitySort Admin"
+  }'
+```
+
+Login:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@citysort.local","password":"ChangeMe12345!"}'
+```
 
 ## Run tests
 

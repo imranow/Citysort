@@ -139,6 +139,7 @@ class ConnectivityResponse(BaseModel):
     database: ServiceHealth
     ocr_provider: ServiceHealth
     classifier_provider: ServiceHealth
+    deployment_provider: Optional[ServiceHealth] = None
     checked_at: str
 
 
@@ -151,10 +152,12 @@ class ManualDeploymentRequest(BaseModel):
 class DeploymentRecord(BaseModel):
     id: int
     environment: str
+    provider: str
     status: str
     actor: str
     notes: Optional[str] = None
     details: Optional[str] = None
+    external_id: Optional[str] = None
     created_at: str
     finished_at: Optional[str] = None
 
@@ -220,3 +223,66 @@ class PlatformSummaryResponse(BaseModel):
     active_api_keys: int
     pending_invitations: int
     latest_deployment: Optional[DeploymentRecord] = None
+
+
+class AuthBootstrapRequest(BaseModel):
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserRecord(BaseModel):
+    id: str
+    email: str
+    full_name: Optional[str] = None
+    role: str
+    status: str
+    last_login_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserRecord
+
+
+class UserCreateRequest(BaseModel):
+    email: str
+    password: str
+    role: str = "viewer"
+    full_name: Optional[str] = None
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: str
+
+
+class UserListResponse(BaseModel):
+    items: list[UserRecord] = Field(default_factory=list)
+
+
+class JobRecord(BaseModel):
+    id: str
+    job_type: str
+    status: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    actor: str
+    attempts: int
+    max_attempts: int
+    worker_id: Optional[str] = None
+    created_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class JobListResponse(BaseModel):
+    items: list[JobRecord] = Field(default_factory=list)

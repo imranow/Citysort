@@ -1,23 +1,31 @@
 from __future__ import annotations
 
 import mimetypes
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .auth import (
+    authenticate_user,
+    authorize_request,
+    bootstrap_admin,
+    create_user_account,
+    get_users,
+    set_user_role,
+)
 from .config import (
+    DEPLOY_PROVIDER,
     CLASSIFIER_PROVIDER,
     CONFIDENCE_THRESHOLD,
     FORCE_REVIEW_DOC_TYPES,
     OCR_PROVIDER,
-    PROCESSED_DIR,
+    REQUIRE_AUTH,
     UPLOAD_DIR,
 )
 from .db_import import (
@@ -28,7 +36,10 @@ from .db_import import (
     get_row_value,
 )
 from .db import get_connection, init_db
-from .pipeline import process_document, route_document
+from .deployments import deployment_provider_health, trigger_manual_deployment
+from .jobs import enqueue_document_processing, get_job_by_id, get_jobs, start_job_worker, stop_job_worker
+from .document_tasks import process_document_by_id
+from .pipeline import route_document
 from .repository import (
     count_api_keys,
     count_invitations,
@@ -52,6 +63,9 @@ from .repository import (
 from .rules import get_active_rules, get_rules_path, reset_rules_to_default, save_rules
 from .schemas import (
     AnalyticsResponse,
+    AuthBootstrapRequest,
+    AuthLoginRequest,
+    AuthResponse,
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
     ApiKeyListResponse,
@@ -64,6 +78,8 @@ from .schemas import (
     DeploymentRecord,
     DocumentListResponse,
     DocumentResponse,
+    JobListResponse,
+    JobRecord,
     InvitationCreateRequest,
     InvitationCreateResponse,
     InvitationListResponse,
@@ -74,6 +90,10 @@ from .schemas import (
     RulesConfigUpdate,
     ReviewRequest,
     ServiceHealth,
+    UserCreateRequest,
+    UserListResponse,
+    UserRecord,
+    UserRoleUpdateRequest,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -94,57 +114,6 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-
-def _process_document_by_id(document_id: str, actor: str = "system") -> None:
-    document = get_document(document_id)
-    if not document:
-        return
-
-    try:
-        result = process_document(file_path=document["storage_path"], content_type=document.get("content_type"))
-        final_status = "needs_review" if result["requires_review"] else "routed"
-
-        update_document(
-            document_id,
-            updates={
-                "status": final_status,
-                "doc_type": result["doc_type"],
-                "department": result["department"],
-                "urgency": result["urgency"],
-                "confidence": result["confidence"],
-                "requires_review": result["requires_review"],
-                "extracted_text": result["extracted_text"],
-                "extracted_fields": result["extracted_fields"],
-                "missing_fields": result["missing_fields"],
-                "validation_errors": result["validation_errors"],
-            },
-        )
-
-        source_path = Path(document["storage_path"])
-        target_path = PROCESSED_DIR / source_path.name
-        if source_path.exists():
-            shutil.copy2(source_path, target_path)
-
-        create_audit_event(
-            document_id=document_id,
-            action="pipeline_processed",
-            actor=actor,
-            details=(
-                f"doc_type={result['doc_type']} confidence={result['confidence']} "
-                f"requires_review={result['requires_review']} threshold={CONFIDENCE_THRESHOLD}"
-            ),
-        )
-
-    except Exception as exc:  # pragma: no cover - runtime safeguard
-        update_document(document_id, updates={"status": "failed", "requires_review": True})
-        create_audit_event(
-            document_id=document_id,
-            action="pipeline_failed",
-            actor=actor,
-            details=str(exc),
-        )
-
-
 def _coerce_optional_text(value: object | None) -> Optional[str]:
     if value is None:
         return None
@@ -154,6 +123,15 @@ def _coerce_optional_text(value: object | None) -> Optional[str]:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _enforce(
+    request: Optional[Request],
+    *,
+    role: str = "viewer",
+    allow_api_key: bool = True,
+) -> dict[str, object]:
+    return authorize_request(request, required_role=role, allow_api_key=allow_api_key)
 
 
 def _database_health() -> ServiceHealth:
@@ -239,10 +217,19 @@ def _classifier_provider_health() -> ServiceHealth:
 
 
 def _connectivity_snapshot() -> ConnectivityResponse:
+    deploy_health_raw = deployment_provider_health()
+    deploy_health = ServiceHealth(
+        name="deployment",
+        status=str(deploy_health_raw.get("status", "unknown")),
+        configured=bool(deploy_health_raw.get("configured", False)),
+        details=str(deploy_health_raw.get("details", "")),
+    )
+
     return ConnectivityResponse(
         database=_database_health(),
         ocr_provider=_ocr_provider_health(),
         classifier_provider=_classifier_provider_health(),
+        deployment_provider=deploy_health,
         checked_at=_utcnow_iso(),
     )
 
@@ -250,6 +237,12 @@ def _connectivity_snapshot() -> ConnectivityResponse:
 @app.on_event("startup")
 def startup_event() -> None:
     init_db()
+    start_job_worker()
+
+
+@app.on_event("shutdown")
+def shutdown_event() -> None:
+    stop_job_worker()
 
 
 @app.get("/health")
@@ -258,6 +251,8 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "ocr_provider": OCR_PROVIDER,
         "classifier_provider": CLASSIFIER_PROVIDER,
+        "deploy_provider": DEPLOY_PROVIDER,
+        "auth_required": str(REQUIRE_AUTH).lower(),
         "confidence_threshold": str(CONFIDENCE_THRESHOLD),
         "force_review_doc_types": ",".join(sorted(FORCE_REVIEW_DOC_TYPES)),
     }
@@ -281,13 +276,72 @@ def root() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
+@app.post("/api/auth/bootstrap", response_model=AuthResponse)
+def auth_bootstrap(payload: AuthBootstrapRequest) -> AuthResponse:
+    try:
+        result = bootstrap_admin(email=payload.email, password=payload.password, full_name=payload.full_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return AuthResponse(access_token=result["access_token"], user=UserRecord(**result["user"]))
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def auth_login(payload: AuthLoginRequest) -> AuthResponse:
+    result = authenticate_user(email=payload.email, password=payload.password)
+    return AuthResponse(access_token=result["access_token"], user=UserRecord(**result["user"]))
+
+
+@app.get("/api/auth/me", response_model=UserRecord)
+def auth_me(request: Request) -> UserRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+    return UserRecord(**user)
+
+
+@app.get("/api/auth/users", response_model=UserListResponse)
+def auth_list_users(request: Request, limit: int = Query(default=200, ge=1, le=500)) -> UserListResponse:
+    _enforce(request, role="admin", allow_api_key=False)
+    items = [UserRecord(**item) for item in get_users(limit=limit)]
+    return UserListResponse(items=items)
+
+
+@app.post("/api/auth/users", response_model=UserRecord)
+def auth_create_user(request: Request, payload: UserCreateRequest) -> UserRecord:
+    _enforce(request, role="admin", allow_api_key=False)
+    try:
+        user = create_user_account(
+            email=payload.email,
+            password=payload.password,
+            role=payload.role,
+            full_name=payload.full_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return UserRecord(**user)
+
+
+@app.patch("/api/auth/users/{user_id}/role", response_model=UserRecord)
+def auth_update_user_role(request: Request, user_id: str, payload: UserRoleUpdateRequest) -> UserRecord:
+    _enforce(request, role="admin", allow_api_key=False)
+    try:
+        updated = set_user_role(user_id=user_id, role=payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return UserRecord(**updated)
+
+
 @app.post("/api/documents/upload", response_model=DocumentResponse)
 async def upload_document(
-    background_tasks: BackgroundTasks,
+    request: Request = None,
     file: UploadFile = File(...),
     source_channel: str = Form("upload_portal"),
     process_async: bool = Form(False),
 ) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
+    actor = str(identity.get("actor", "upload_portal"))
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
 
@@ -317,14 +371,14 @@ async def upload_document(
     create_audit_event(
         document_id=document_id,
         action="uploaded",
-        actor="upload_portal",
+        actor=actor,
         details=f"source_channel={source_channel} file={file.filename}",
     )
 
     if process_async:
-        background_tasks.add_task(_process_document_by_id, document_id)
+        enqueue_document_processing(document_id=document_id, actor=actor)
     else:
-        _process_document_by_id(document_id)
+        process_document_by_id(document_id, actor=actor)
 
     refreshed = get_document(document_id)
     if not refreshed:
@@ -336,8 +390,11 @@ async def upload_document(
 @app.post("/api/documents/import/database", response_model=DatabaseImportResponse)
 def import_documents_from_database(
     payload: DatabaseImportRequest,
-    background_tasks: BackgroundTasks,
+    request: Request = None,
 ) -> DatabaseImportResponse:
+    identity = _enforce(request, role="operator")
+    actor = str(identity.get("actor", payload.actor or "database_importer"))
+
     try:
         connection = connect_external_database(payload.database_url)
     except ExternalDatabaseError as exc:
@@ -415,15 +472,15 @@ def import_documents_from_database(
                 create_audit_event(
                     document_id=document_id,
                     action="database_imported",
-                    actor=payload.actor,
+                    actor=actor,
                     details=f"source_channel={payload.source_channel} row={index}",
                 )
 
                 if payload.process_async:
-                    background_tasks.add_task(_process_document_by_id, document_id, payload.actor)
+                    enqueue_document_processing(document_id=document_id, actor=actor)
                     scheduled_async_count += 1
                 else:
-                    _process_document_by_id(document_id, actor=payload.actor)
+                    process_document_by_id(document_id, actor=actor)
                     processed_sync_count += 1
 
                 refreshed = get_document(document_id)
@@ -458,10 +515,12 @@ def import_documents_from_database(
 
 @app.get("/api/documents", response_model=DocumentListResponse)
 def get_documents(
+    request: Request = None,
     status: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> DocumentListResponse:
+    _enforce(request, role="viewer")
     items: list[DocumentResponse] = []
     for item in list_documents(status=status, department=department, limit=limit):
         # Keep list endpoint light; full text is available from document detail endpoint.
@@ -472,7 +531,8 @@ def get_documents(
 
 
 @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
-def get_document_by_id(document_id: str) -> DocumentResponse:
+def get_document_by_id(document_id: str, request: Request = None) -> DocumentResponse:
+    _enforce(request, role="viewer")
     record = get_document(document_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -480,7 +540,8 @@ def get_document_by_id(document_id: str) -> DocumentResponse:
 
 
 @app.post("/api/documents/{document_id}/review", response_model=DocumentResponse)
-def review_document(document_id: str, payload: ReviewRequest) -> DocumentResponse:
+def review_document(document_id: str, payload: ReviewRequest, request: Request = None) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
     document = get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -512,7 +573,7 @@ def review_document(document_id: str, payload: ReviewRequest) -> DocumentRespons
     create_audit_event(
         document_id=document_id,
         action="reviewed",
-        actor=payload.actor,
+        actor=str(identity.get("actor", payload.actor)),
         details=(
             f"approve={payload.approve} corrected_doc_type={payload.corrected_doc_type} "
             f"allowed_types={','.join(sorted(get_active_rules()[0].keys()))}"
@@ -523,12 +584,13 @@ def review_document(document_id: str, payload: ReviewRequest) -> DocumentRespons
 
 
 @app.post("/api/documents/{document_id}/reprocess", response_model=DocumentResponse)
-def reprocess_document(document_id: str) -> DocumentResponse:
+def reprocess_document(document_id: str, request: Request = None) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
     document = get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    _process_document_by_id(document_id, actor="manual_reprocess")
+    process_document_by_id(document_id, actor=str(identity.get("actor", "manual_reprocess")))
     updated = get_document(document_id)
     if not updated:
         raise HTTPException(status_code=500, detail="Unable to reload document")
@@ -537,7 +599,12 @@ def reprocess_document(document_id: str) -> DocumentResponse:
 
 
 @app.get("/api/documents/{document_id}/audit", response_model=AuditTrailResponse)
-def get_document_audit(document_id: str, limit: int = Query(default=50, ge=1, le=200)) -> AuditTrailResponse:
+def get_document_audit(
+    document_id: str,
+    request: Request = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> AuditTrailResponse:
+    _enforce(request, role="viewer")
     document = get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -546,13 +613,15 @@ def get_document_audit(document_id: str, limit: int = Query(default=50, ge=1, le
 
 
 @app.get("/api/config/rules", response_model=RulesConfigResponse)
-def get_rules_config() -> RulesConfigResponse:
+def get_rules_config(request: Request = None) -> RulesConfigResponse:
+    _enforce(request, role="viewer")
     rules, source = get_active_rules()
     return RulesConfigResponse(source=source, path=str(get_rules_path()), rules=rules)
 
 
 @app.put("/api/config/rules", response_model=RulesConfigResponse)
-def update_rules_config(payload: RulesConfigUpdate) -> RulesConfigResponse:
+def update_rules_config(payload: RulesConfigUpdate, request: Request = None) -> RulesConfigResponse:
+    _enforce(request, role="operator")
     try:
         normalized = save_rules({key: value.model_dump() for key, value in payload.rules.items()})
     except ValueError as exc:
@@ -562,65 +631,89 @@ def update_rules_config(payload: RulesConfigUpdate) -> RulesConfigResponse:
 
 
 @app.post("/api/config/rules/reset", response_model=RulesConfigResponse)
-def reset_rules_config() -> RulesConfigResponse:
+def reset_rules_config(request: Request = None) -> RulesConfigResponse:
+    _enforce(request, role="operator")
     rules = reset_rules_to_default()
     return RulesConfigResponse(source="default", path=str(get_rules_path()), rules=rules)
 
 
 @app.get("/api/queues", response_model=QueueResponse)
-def get_queues() -> QueueResponse:
+def get_queues(request: Request = None) -> QueueResponse:
+    _enforce(request, role="viewer")
     queues = get_queue_snapshot()
     return QueueResponse(queues=queues)
 
 
 @app.get("/api/analytics", response_model=AnalyticsResponse)
-def get_analytics() -> AnalyticsResponse:
+def get_analytics(request: Request = None) -> AnalyticsResponse:
+    _enforce(request, role="viewer")
     snapshot = get_analytics_snapshot()
     return AnalyticsResponse(**snapshot)
 
 
 @app.get("/api/platform/connectivity", response_model=ConnectivityResponse)
-def get_platform_connectivity() -> ConnectivityResponse:
+def get_platform_connectivity(request: Request = None) -> ConnectivityResponse:
+    _enforce(request, role="viewer")
     return _connectivity_snapshot()
 
 
 @app.post("/api/platform/connectivity/check", response_model=ConnectivityResponse)
-def run_platform_connectivity_check() -> ConnectivityResponse:
+def run_platform_connectivity_check(request: Request = None) -> ConnectivityResponse:
+    _enforce(request, role="operator")
     return _connectivity_snapshot()
 
 
 @app.post("/api/platform/deployments/manual", response_model=DeploymentRecord)
-def run_manual_deployment(payload: ManualDeploymentRequest) -> DeploymentRecord:
+def run_manual_deployment(payload: ManualDeploymentRequest, request: Request = None) -> DeploymentRecord:
+    identity = _enforce(request, role="operator")
+    actor = str(identity.get("actor", payload.actor or "dashboard_admin"))
+
     snapshot = _connectivity_snapshot()
-    is_ready = snapshot.database.status == "ok"
-    status = "completed" if is_ready else "failed"
-    details = (
+    health_details = (
         f"database={snapshot.database.status}; "
         f"ocr={snapshot.ocr_provider.status}; "
-        f"classifier={snapshot.classifier_provider.status}"
+        f"classifier={snapshot.classifier_provider.status}; "
+        f"deploy={snapshot.deployment_provider.status if snapshot.deployment_provider else 'unknown'}"
     )
+
+    try:
+        deploy_result = trigger_manual_deployment(environment=payload.environment, actor=actor, notes=payload.notes)
+        status = deploy_result.get("status", "completed")
+        details = f"{health_details}; {deploy_result.get('details', '')}".strip("; ")
+        external_id = deploy_result.get("external_id")
+        provider = str(deploy_result.get("provider", DEPLOY_PROVIDER))
+    except Exception as exc:
+        status = "failed"
+        details = f"{health_details}; deployment_error={exc}"
+        external_id = None
+        provider = DEPLOY_PROVIDER
+
     created = create_deployment(
         environment=payload.environment,
-        actor=payload.actor,
+        provider=provider,
+        actor=actor,
         notes=payload.notes,
         status=status,
         details=details,
+        external_id=external_id,
     )
     return DeploymentRecord(**created)
 
 
 @app.get("/api/platform/deployments", response_model=DeploymentListResponse)
-def get_platform_deployments(limit: int = Query(default=20, ge=1, le=100)) -> DeploymentListResponse:
+def get_platform_deployments(request: Request = None, limit: int = Query(default=20, ge=1, le=100)) -> DeploymentListResponse:
+    _enforce(request, role="viewer")
     items = [DeploymentRecord(**item) for item in list_deployments(limit=limit)]
     return DeploymentListResponse(items=items)
 
 
 @app.post("/api/platform/invitations", response_model=InvitationCreateResponse)
 def create_platform_invitation(payload: InvitationCreateRequest, request: Request) -> InvitationCreateResponse:
+    identity = _enforce(request, role="operator")
     invitation, raw_token = create_invitation(
         email=payload.email.strip().lower(),
         role=payload.role.strip().lower(),
-        actor=payload.actor,
+        actor=str(identity.get("actor", payload.actor or "dashboard_admin")),
         expires_in_days=payload.expires_in_days,
     )
     invite_link = f"{str(request.base_url).rstrip('/')}/invite/{raw_token}"
@@ -633,34 +726,40 @@ def create_platform_invitation(payload: InvitationCreateRequest, request: Reques
 
 @app.get("/api/platform/invitations", response_model=InvitationListResponse)
 def get_platform_invitations(
+    request: Request = None,
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> InvitationListResponse:
+    _enforce(request, role="viewer")
     items = [item for item in list_invitations(status=status, limit=limit)]
     return InvitationListResponse(items=items)
 
 
 @app.post("/api/platform/api-keys", response_model=ApiKeyCreateResponse)
-def create_platform_api_key(payload: ApiKeyCreateRequest) -> ApiKeyCreateResponse:
+def create_platform_api_key(payload: ApiKeyCreateRequest, request: Request = None) -> ApiKeyCreateResponse:
+    identity = _enforce(request, role="operator")
     key_name = payload.name.strip()
     if not key_name:
         raise HTTPException(status_code=400, detail="API key name is required.")
 
-    record, raw_key = create_api_key(name=key_name, actor=payload.actor)
+    record, raw_key = create_api_key(name=key_name, actor=str(identity.get("actor", payload.actor or "dashboard_admin")))
     return ApiKeyCreateResponse(api_key=record, raw_key=raw_key)
 
 
 @app.get("/api/platform/api-keys", response_model=ApiKeyListResponse)
 def get_platform_api_keys(
+    request: Request = None,
     include_revoked: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> ApiKeyListResponse:
+    _enforce(request, role="viewer")
     items = [item for item in list_api_keys(include_revoked=include_revoked, limit=limit)]
     return ApiKeyListResponse(items=items)
 
 
 @app.post("/api/platform/api-keys/{key_id}/revoke", response_model=ApiKeyRecord)
-def revoke_platform_api_key(key_id: int) -> ApiKeyRecord:
+def revoke_platform_api_key(key_id: int, request: Request = None) -> ApiKeyRecord:
+    _enforce(request, role="operator")
     updated = revoke_api_key(key_id=key_id)
     if not updated:
         raise HTTPException(status_code=404, detail="API key not found.")
@@ -668,7 +767,8 @@ def revoke_platform_api_key(key_id: int) -> ApiKeyRecord:
 
 
 @app.get("/api/platform/summary", response_model=PlatformSummaryResponse)
-def get_platform_summary() -> PlatformSummaryResponse:
+def get_platform_summary(request: Request = None) -> PlatformSummaryResponse:
+    _enforce(request, role="viewer")
     connectivity = _connectivity_snapshot()
     active_api_keys = count_api_keys(status="active")
     pending_invitations = count_invitations(status="pending")
@@ -681,3 +781,23 @@ def get_platform_summary() -> PlatformSummaryResponse:
         pending_invitations=pending_invitations,
         latest_deployment=latest_deployment,
     )
+
+
+@app.get("/api/jobs", response_model=JobListResponse)
+def list_worker_jobs(
+    request: Request = None,
+    status: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> JobListResponse:
+    _enforce(request, role="viewer")
+    items = [JobRecord(**item) for item in get_jobs(status=status, limit=limit)]
+    return JobListResponse(items=items)
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobRecord)
+def get_worker_job(job_id: str, request: Request = None) -> JobRecord:
+    _enforce(request, role="viewer")
+    record = get_job_by_id(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return JobRecord(**record)
