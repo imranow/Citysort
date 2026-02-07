@@ -78,7 +78,7 @@ html {
 body {
   margin: 0;
   color: var(--ink);
-  font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
+  font-family: "Manrope", "Segoe UI", -apple-system, sans-serif;
   background: linear-gradient(180deg, var(--bg), var(--bg-2));
 }
 
