@@ -56,7 +56,9 @@ const rulesApplyJson = document.getElementById("rules-apply-json");
 const rulesJson = document.getElementById("rules-json");
 const rulesStatus = document.getElementById("rules-status");
 const rulesBuilder = document.getElementById("rules-builder");
-const uploadButton = uploadForm.querySelector('button[type="submit"]');
+const uploadButton = document.getElementById("upload-submit-btn");
+const uploadDropzone = document.getElementById("upload-dropzone");
+const uploadFileList = document.getElementById("upload-file-list");
 const AUTH_TOKEN_KEY = "citysort_access_token";
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
@@ -528,18 +530,57 @@ function connectivitySummary(data) {
   return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}, Deploy: ${deploy}`;
 }
 
+var prevMetrics = { total: null, review: null, routed: null, confidence: null };
+
+function updateMetric(id, newVal, prevVal, barId, barPct, trendId) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  if (prevVal !== null && newVal !== prevVal) {
+    el.classList.add("is-updating");
+    setTimeout(function () { el.classList.remove("is-updating"); }, 350);
+  }
+  var trendEl = document.getElementById(trendId);
+  if (trendEl && prevVal !== null) {
+    trendEl.classList.remove("trend-up", "trend-down", "is-visible");
+    if (newVal > prevVal) { trendEl.classList.add("trend-up", "is-visible"); }
+    else if (newVal < prevVal) { trendEl.classList.add("trend-down", "is-visible"); }
+  }
+  var barEl = document.getElementById(barId);
+  if (barEl) { barEl.style.width = Math.min(barPct, 100) + "%"; }
+}
+
 async function loadAnalytics() {
   const data = await parseJSON(await apiFetch("/api/analytics"));
-  setText("metric-total", String(data.total_documents));
-  setText("metric-review", String(data.needs_review));
-  setText("metric-routed", String(data.routed_or_approved));
-  setText("metric-confidence", percent(data.average_confidence));
+  var total = data.total_documents || 0;
+  var review = data.needs_review || 0;
+  var routed = data.routed_or_approved || 0;
+  var conf = data.average_confidence || 0;
+
+  setText("metric-total", String(total));
+  setText("metric-review", String(review));
+  setText("metric-routed", String(routed));
+  setText("metric-confidence", percent(conf));
+
+  var maxDoc = Math.max(total, 1);
+  updateMetric("metric-total", total, prevMetrics.total, "metric-total-bar", 100, "metric-total-trend");
+  updateMetric("metric-review", review, prevMetrics.review, "metric-review-bar", (review / maxDoc) * 100, "metric-review-trend");
+  updateMetric("metric-routed", routed, prevMetrics.routed, "metric-routed-bar", (routed / maxDoc) * 100, "metric-routed-trend");
+  updateMetric("metric-confidence", Math.round(conf * 100), prevMetrics.confidence, "metric-confidence-bar", conf * 100, "metric-confidence-trend");
+
+  prevMetrics.total = total;
+  prevMetrics.review = review;
+  prevMetrics.routed = routed;
+  prevMetrics.confidence = Math.round(conf * 100);
 }
 
 async function loadQueues() {
   const data = await parseJSON(await apiFetch("/api/queues"));
   if (!data.queues.length) {
-    queueBody.innerHTML = "<tr><td colspan='4'>No queues yet.</td></tr>";
+    queueBody.innerHTML = '<tr><td colspan="4"><div class="table-empty">' +
+      '<svg class="table-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="8" width="36" height="32" rx="4"/><path d="M6 18h36M18 18v22"/></svg>' +
+      '<p class="table-empty-title">No department queues</p>' +
+      '<p class="table-empty-desc">Queues appear after documents are processed and routed to departments.</p>' +
+      '</div></td></tr>';
     return;
   }
 
@@ -578,7 +619,11 @@ async function loadDocuments() {
   }
 
   if (!items.length) {
-    docsBody.innerHTML = "<tr><td colspan='6'>No matching documents.</td></tr>";
+    docsBody.innerHTML = '<tr><td colspan="6"><div class="table-empty">' +
+      '<svg class="table-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h14l10 10v24a4 4 0 01-4 4H14a4 4 0 01-4-4V10a4 4 0 014-4z"/><path d="M28 6v10h10"/><path d="M18 28h12M18 34h8"/></svg>' +
+      '<p class="table-empty-title">No matching documents</p>' +
+      '<p class="table-empty-desc">Upload documents or adjust your filters to see records here.</p>' +
+      '</div></td></tr>';
     return;
   }
 
@@ -644,9 +689,11 @@ async function saveRulesConfig() {
     rulesMeta.textContent = `Source: ${updated.source} | Path: ${updated.path}`;
     rulesJson.value = JSON.stringify(activeRules, null, 2);
     rulesStatus.textContent = "Rules saved. New uploads now use this rule set.";
+    showToast("Rules saved successfully", "success");
     await loadAll();
   } catch (error) {
     rulesStatus.textContent = `Failed to save rules: ${error.message}`;
+    showToast("Failed to save rules: " + error.message, "error");
   }
 }
 
@@ -664,9 +711,11 @@ async function resetRulesConfig() {
     rulesMeta.textContent = `Source: ${updated.source} | Path: ${updated.path}`;
     rulesJson.value = JSON.stringify(activeRules, null, 2);
     rulesStatus.textContent = "Rules reset to defaults.";
+    showToast("Rules reset to defaults", "info");
     await loadAll();
   } catch (error) {
     rulesStatus.textContent = `Failed to reset rules: ${error.message}`;
+    showToast("Failed to reset rules: " + error.message, "error");
   }
 }
 
@@ -700,7 +749,31 @@ function addNewRuleType() {
   rulesStatus.textContent = `Added ${nextKey}. Fill it out and click Save Rules.`;
 }
 
+function showMetricsSkeleton() {
+  ["metric-total", "metric-review", "metric-routed", "metric-confidence"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.innerHTML = '<span class="skeleton skeleton-number"></span>';
+  });
+}
+
+function showTableSkeleton(tbody, cols, rows) {
+  if (!rows) rows = 4;
+  var cls = cols === 6 ? "skeleton-row skeleton-row-6" : "skeleton-row";
+  var html = "";
+  for (var i = 0; i < rows; i++) {
+    html += '<tr><td colspan="' + cols + '"><div class="' + cls + '">';
+    for (var c = 0; c < cols; c++) {
+      html += '<span class="skeleton skeleton-cell"></span>';
+    }
+    html += '</div></td></tr>';
+  }
+  tbody.innerHTML = html;
+}
+
 async function loadAll() {
+  showMetricsSkeleton();
+  showTableSkeleton(queueBody, 4);
+  showTableSkeleton(docsBody, 6);
   await Promise.all([loadAnalytics(), loadQueues(), loadDocuments()]);
   if (lastUpdated) {
     lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
@@ -815,13 +888,16 @@ function bindDatabaseImport() {
 
       if (result.errors && result.errors.length) {
         dbImportStatus.textContent = `${baseMessage} First error: ${result.errors[0]}`;
+        showToast("Import completed with errors", "warning");
       } else {
         dbImportStatus.textContent = baseMessage;
+        showToast("Database import completed: " + result.imported_count + " rows", "success");
       }
 
       await loadAll();
     } catch (error) {
       dbImportStatus.textContent = `Database import failed: ${error.message}`;
+      showToast("Database import failed: " + error.message, "error");
     } finally {
       setButtonBusy(dbImportSubmit, "Importing...", false);
     }
@@ -1018,9 +1094,12 @@ uploadForm.addEventListener("submit", async (event) => {
     }
 
     fileInput.value = "";
+    uploadFileList.innerHTML = "";
+    uploadButton.disabled = true;
     await loadAll();
   } catch (error) {
     uploadStatus.textContent = `Upload flow failed: ${error.message}`;
+    showToast("Upload flow failed: " + error.message, "error");
   } finally {
     setButtonBusy(uploadButton, "Uploading...", false);
   }
@@ -1120,11 +1199,13 @@ reprocessButton.addEventListener("click", async () => {
       }),
     );
     reviewStatus.textContent = "Document reprocessed with latest rules/providers.";
+    showToast("Document reprocessed successfully", "success");
     await loadAll();
     const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
     renderReviewDocument(updated, audit.items || []);
   } catch (error) {
     reviewStatus.textContent = `Reprocess failed: ${error.message}`;
+    showToast("Reprocess failed: " + error.message, "error");
   }
 });
 
@@ -1151,6 +1232,70 @@ refreshButton.addEventListener("click", async () => {
     setButtonBusy(refreshButton, "Refreshing...", false);
   }
 });
+
+// ── Dropzone setup ──────────────────────────────────
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function renderUploadFileList() {
+  var files = Array.from(fileInput.files || []);
+  uploadButton.disabled = !files.length;
+  if (!files.length) { uploadFileList.innerHTML = ""; return; }
+  uploadFileList.innerHTML = files.map(function (f, i) {
+    return '<div class="upload-file-item" data-index="' + i + '">' +
+      '<span class="file-name">' + escapeHtml(f.name) + '</span>' +
+      '<span class="file-size">' + formatFileSize(f.size) + '</span>' +
+      '<button type="button" class="file-remove" aria-label="Remove">&times;</button>' +
+      '</div>';
+  }).join("");
+}
+
+function setFilesOnInput(fileArray) {
+  var dt = new DataTransfer();
+  fileArray.forEach(function (f) { dt.items.add(f); });
+  fileInput.files = dt.files;
+  renderUploadFileList();
+}
+
+if (uploadDropzone) {
+  uploadDropzone.addEventListener("click", function (e) {
+    if (e.target.classList.contains("file-remove")) return;
+    fileInput.click();
+  });
+  fileInput.addEventListener("change", function () { renderUploadFileList(); });
+
+  uploadDropzone.addEventListener("dragenter", function (e) { e.preventDefault(); uploadDropzone.classList.add("is-dragover"); });
+  uploadDropzone.addEventListener("dragover", function (e) { e.preventDefault(); uploadDropzone.classList.add("is-dragover"); });
+  uploadDropzone.addEventListener("dragleave", function (e) { e.preventDefault(); uploadDropzone.classList.remove("is-dragover"); });
+  uploadDropzone.addEventListener("drop", function (e) {
+    e.preventDefault();
+    uploadDropzone.classList.remove("is-dragover");
+    if (e.dataTransfer && e.dataTransfer.files.length) {
+      setFilesOnInput(Array.from(e.dataTransfer.files));
+    }
+  });
+
+  uploadFileList.addEventListener("click", function (e) {
+    var removeBtn = e.target.closest(".file-remove");
+    if (!removeBtn) return;
+    var item = removeBtn.closest(".upload-file-item");
+    var idx = parseInt(item.dataset.index, 10);
+    var files = Array.from(fileInput.files || []);
+    files.splice(idx, 1);
+    setFilesOnInput(files);
+  });
+}
+
+// ── Theme toggle ────────────────────────────────────
+var themeToggle = document.getElementById("theme-toggle");
+if (themeToggle) {
+  themeToggle.addEventListener("click", function () {
+    if (typeof window._toggleTheme === "function") window._toggleTheme();
+  });
+}
 
 bindFilters();
 bindDocumentClicks();
