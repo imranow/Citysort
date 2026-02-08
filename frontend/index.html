@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <script>
@@ -34,39 +34,39 @@
     <style>
       /* Critical fallback so shell layout remains usable if stale cached CSS is served. */
       :root {
-        --bg: #f4f6fb;
+        --bg: #f3f4f6;
         --surface: #ffffff;
-        --surface-muted: #f6f8fd;
-        --line: #d9e0ed;
-        --ink: #171c28;
-        --ink-soft: #5a657b;
-        --accent: #6b57ff;
-        --accent-soft: #eeeaff;
-        --primary-btn-bg: #232f4d;
-        --primary-btn-text: #f7f9ff;
+        --surface-muted: #f6f7f9;
+        --line: #d1d5db;
+        --ink: #111827;
+        --ink-soft: #4b5563;
+        --accent: #0a66d6;
+        --accent-soft: #e7f0fa;
+        --primary-btn-bg: #111827;
+        --primary-btn-text: #f9fafb;
       }
 
       html[data-theme="dark"] {
-        --bg: #090e17;
-        --surface: #111a2b;
-        --surface-muted: #0d1627;
-        --line: #2d3a52;
-        --ink: #eff3ff;
-        --ink-soft: #9aa7c2;
-        --accent: #9b8dff;
-        --accent-soft: #2b2550;
-        --primary-btn-bg: #8f80ff;
-        --primary-btn-text: #171136;
+        --bg: #0b0f14;
+        --surface: #161b22;
+        --surface-muted: #121820;
+        --line: #2e3742;
+        --ink: #f1f5f9;
+        --ink-soft: #9ca3af;
+        --accent: #60a5fa;
+        --accent-soft: #15273c;
+        --primary-btn-bg: #f1f5f9;
+        --primary-btn-text: #0f172a;
       }
 
       html,
       body {
         margin: 0;
         min-height: 100%;
-        font-size: 17px;
+        font-size: 18px;
         background: var(--bg);
         color: var(--ink);
-        font-family: "Plus Jakarta Sans", "Segoe UI", -apple-system, sans-serif;
+        font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
       }
 
       a {
@@ -236,6 +236,28 @@
         border: 1px solid var(--line);
         background: var(--surface);
         flex: 0 0 auto;
+      }
+
+      :where(
+        .sidebar-service,
+        .sidebar-account,
+        .account-avatar,
+        .platform-status,
+        .shell-topbar,
+        .meta-chip,
+        .panel,
+        .link-icon,
+        .sidebar-link,
+        input,
+        select,
+        textarea,
+        button
+      ) {
+        border-radius: 0 !important;
+      }
+
+      .app-shell * {
+        border-radius: 0 !important;
       }
 
       .panel.is-page-hidden {
@@ -470,54 +492,73 @@
 
           <section class="panel db-import-panel" data-pages="overview db-import">
             <div class="section-head">
-              <h2>Database Import</h2>
-              <p>Bulk ingest from SQL</p>
+              <h2>Import From Database</h2>
+              <p>Simple 3-step setup</p>
             </div>
+            <p class="subtitle-small">Paste your database connection and query. We handle the rest with safe defaults.</p>
             <form id="db-import-form">
-              <label for="db-url">Database URL</label>
+              <label for="db-url">1. Database URL</label>
               <input
                 id="db-url"
                 type="text"
-                placeholder="postgresql://user:pass@host:5432/dbname (also supports sqlite/mysql)"
+                placeholder="postgresql://user:pass@host:5432/dbname"
                 required
               />
 
-              <label for="db-query">SQL Query (SELECT)</label>
+              <label for="db-query">2. SQL Query (read-only SELECT)</label>
               <textarea id="db-query" rows="4" spellcheck="false">
 SELECT filename, content, content_type
 FROM documents_to_ingest</textarea
               >
 
-              <div class="db-import-grid">
-                <div>
-                  <label for="db-filename-column">Filename Column</label>
-                  <input id="db-filename-column" type="text" value="filename" />
-                </div>
-                <div>
-                  <label for="db-content-column">Content Column</label>
-                  <input id="db-content-column" type="text" value="content" />
-                </div>
-                <div>
-                  <label for="db-path-column">File Path Column (optional)</label>
-                  <input id="db-path-column" type="text" placeholder="file_path" />
-                </div>
-                <div>
-                  <label for="db-content-type-column">Content-Type Column</label>
-                  <input id="db-content-type-column" type="text" value="content_type" />
-                </div>
-                <div>
-                  <label for="db-limit">Row Limit</label>
-                  <input id="db-limit" type="number" min="1" max="5000" value="500" />
-                </div>
+              <label>3. Where is the document data?</label>
+              <div class="choice-grid">
+                <label class="choice-card" for="db-source-content">
+                  <input id="db-source-content" type="radio" name="db-source-mode" value="content" checked />
+                  <span class="choice-title">Content column</span>
+                  <span class="choice-desc">Your query returns file content directly (best for most setups).</span>
+                </label>
+                <label class="choice-card" for="db-source-path">
+                  <input id="db-source-path" type="radio" name="db-source-mode" value="path" />
+                  <span class="choice-title">File path column</span>
+                  <span class="choice-desc">Your query returns file paths on this server.</span>
+                </label>
               </div>
+              <p id="db-source-helper" class="status">Mode: Content column selected.</p>
 
-              <label class="check-inline" for="db-process-async">
-                <input id="db-process-async" type="checkbox" />
-                Process asynchronously
-              </label>
+              <details class="rules-advanced">
+                <summary>Advanced Mapping</summary>
+                <div class="db-import-grid">
+                  <div>
+                    <label for="db-filename-column">Filename Column</label>
+                    <input id="db-filename-column" type="text" value="filename" />
+                  </div>
+                  <div>
+                    <label for="db-content-column">Content Column</label>
+                    <input id="db-content-column" type="text" value="content" />
+                  </div>
+                  <div>
+                    <label for="db-path-column">File Path Column</label>
+                    <input id="db-path-column" type="text" placeholder="file_path" />
+                  </div>
+                  <div>
+                    <label for="db-content-type-column">Content-Type Column</label>
+                    <input id="db-content-type-column" type="text" value="content_type" />
+                  </div>
+                  <div>
+                    <label for="db-limit">Row Limit</label>
+                    <input id="db-limit" type="number" min="1" max="5000" value="500" />
+                  </div>
+                </div>
+
+                <label class="check-inline" for="db-process-async">
+                  <input id="db-process-async" type="checkbox" />
+                  Process in background (recommended for large imports)
+                </label>
+              </details>
 
               <div class="actions">
-                <button id="db-import-submit" type="submit">Import & Process</button>
+                <button id="db-import-submit" type="submit">Start Import</button>
               </div>
             </form>
             <p id="db-import-status" class="status"></p>
@@ -582,9 +623,10 @@ FROM documents_to_ingest</textarea
 
           <section class="panel review-panel" id="review-panel" data-pages="overview review">
             <div class="section-head">
-              <h2>Human Review</h2>
-              <p>Decision support</p>
+              <h2>Review Document</h2>
+              <p>Quick decision flow</p>
             </div>
+            <p class="subtitle-small">Pick a document from the worklist, then approve or send it back to review.</p>
             <div class="review-context">
               <p id="review-selected">Select a document from the worklist.</p>
               <div class="review-tags">
@@ -609,71 +651,68 @@ FROM documents_to_ingest</textarea
             <form id="review-form">
               <input type="hidden" id="review-id" />
 
-              <div class="form-group">
-                <p class="form-group-label">Classification Correction</p>
-                <label for="review-doc-type">Corrected Type</label>
-                <select id="review-doc-type">
-                  <option value="">(No change)</option>
-                  <option value="building_permit">building_permit</option>
-                  <option value="business_license">business_license</option>
-                  <option value="foi_request">foi_request</option>
-                  <option value="zoning_variance">zoning_variance</option>
-                  <option value="complaint">complaint</option>
-                  <option value="benefits_application">benefits_application</option>
-                  <option value="court_filing">court_filing</option>
-                  <option value="other">other</option>
-                </select>
+              <label for="review-doc-type">Correct type (only if wrong)</label>
+              <select id="review-doc-type">
+                <option value="">(No change)</option>
+                <option value="building_permit">building_permit</option>
+                <option value="business_license">business_license</option>
+                <option value="foi_request">foi_request</option>
+                <option value="zoning_variance">zoning_variance</option>
+                <option value="complaint">complaint</option>
+                <option value="benefits_application">benefits_application</option>
+                <option value="court_filing">court_filing</option>
+                <option value="other">other</option>
+              </select>
 
-                <label for="review-department">Corrected Department</label>
-                <input id="review-department" type="text" placeholder="Optional" />
+              <label for="review-department">Correct department (optional)</label>
+              <input id="review-department" type="text" placeholder="Leave blank to keep current" />
+
+              <label for="review-notes">Reviewer notes (optional)</label>
+              <textarea id="review-notes" rows="3" placeholder="Brief reason for your decision"></textarea>
+
+              <div class="actions">
+                <button type="submit">Approve</button>
+                <button type="button" id="reject" class="secondary">Keep In Review</button>
+                <button type="button" id="reprocess" class="secondary">Reprocess</button>
               </div>
 
-              <div class="form-group">
-                <p class="form-group-label">Reviewer Input</p>
-                <label for="review-notes">Notes</label>
-                <textarea id="review-notes" rows="3" placeholder="What changed and why?"></textarea>
+              <details class="rules-advanced review-advanced">
+                <summary>Advanced Details</summary>
 
                 <label for="review-fields-json">Corrected Fields (JSON)</label>
                 <textarea id="review-fields-json" rows="7" spellcheck="false">{}</textarea>
-              </div>
 
-              <div class="actions">
-                <button type="submit"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M3 8.5l3.5 3.5L13 4"/></svg>Approve</button>
-                <button type="button" id="reject" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v4M8 11v.5"/></svg>Keep In Review</button>
-                <button type="button" id="reprocess" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M2.5 8a5.5 5.5 0 019.5-3.75M13.5 8a5.5 5.5 0 01-9.5 3.75"/><path d="M12 1v3.25h-3.25M4 11.75V15h3.25"/></svg>Reprocess</button>
-              </div>
+                <label for="review-text-preview">Extracted Text Preview</label>
+                <pre id="review-text-preview" class="mono-block">-</pre>
+
+                <label for="review-audit">Audit Trail (Latest First)</label>
+                <pre id="review-audit" class="mono-block">-</pre>
+              </details>
             </form>
-
-            <label for="review-text-preview">Extracted Text Preview</label>
-            <pre id="review-text-preview" class="mono-block">-</pre>
-
-            <label for="review-audit">Audit Trail (Latest First)</label>
-            <pre id="review-audit" class="mono-block">-</pre>
             <p id="review-status" class="status"></p>
           </section>
 
           <section class="panel rules-panel" data-pages="overview rules">
             <div class="section-head">
-              <h2>Routing Rules Editor</h2>
-              <p>Policy logic for new uploads</p>
+              <h2>Routing Rules</h2>
+              <p>Plain-language setup</p>
             </div>
             <p class="subtitle-small">
-              Edit document types, keywords, required fields, and department mapping. Changes apply immediately to new
-              uploads.
+              For each document type, choose the destination department and a few trigger keywords.
             </p>
             <p id="rules-meta" class="status">Source: -</p>
             <div class="actions">
-              <button type="button" id="rules-load" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M3 14V3a1 1 0 011-1h5l4 4v8a1 1 0 01-1 1H4a1 1 0 01-1-1z"/><path d="M9 2v4h4"/></svg>Load Rules</button>
-              <button type="button" id="rules-add" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M8 3v10M3 8h10"/></svg>Add Type</button>
-              <button type="button" id="rules-save"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M12.5 14h-9A1.5 1.5 0 012 12.5v-9A1.5 1.5 0 013.5 2h7.09L14 5.41V12.5a1.5 1.5 0 01-1.5 1.5z"/><path d="M10 14V9H6v5M6 2v3h5"/></svg>Save Rules</button>
-              <button type="button" id="rules-reset" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M2.5 8a5.5 5.5 0 019.5-3.75M13.5 8a5.5 5.5 0 01-9.5 3.75"/><path d="M12 1v3.25h-3.25M4 11.75V15h3.25"/></svg>Reset Defaults</button>
+              <button type="button" id="rules-add" class="secondary">Add Type</button>
+              <button type="button" id="rules-save">Save Rules</button>
+              <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
+              <button type="button" id="rules-load" class="secondary">Reload</button>
             </div>
 
             <div id="rules-builder" class="rules-builder"></div>
 
             <details class="rules-advanced">
-              <summary>Advanced JSON Editor</summary>
-              <p class="subtitle-small">Optional. You can edit JSON directly, then apply it back to the form view.</p>
+              <summary>Advanced Rule Options</summary>
+              <p class="subtitle-small">Use this only if you need full JSON editing.</p>
               <div class="actions">
                 <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
               </div>

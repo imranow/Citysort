@@ -36,6 +36,9 @@ const dbLimitInput = document.getElementById("db-limit");
 const dbProcessAsync = document.getElementById("db-process-async");
 const dbImportStatus = document.getElementById("db-import-status");
 const dbImportSubmit = document.getElementById("db-import-submit");
+const dbSourceContentRadio = document.getElementById("db-source-content");
+const dbSourcePathRadio = document.getElementById("db-source-path");
+const dbSourceHelper = document.getElementById("db-source-helper");
 
 const reviewSelected = document.getElementById("review-selected");
 const reviewCurrentStatus = document.getElementById("review-current-status");
@@ -170,23 +173,25 @@ function buildRuleRowHtml(docType, rule) {
     <div class="rule-row" data-rule-row="${safeType}">
       <div class="rule-row-grid">
         <div>
-          <label>Document Type Key</label>
+          <label>Document Type</label>
           <input class="rule-doc-type" value="${safeType}" ${locked ? "readonly" : ""} />
-          <p class="hint">Use lowercase words and underscores.</p>
+          <p class="hint">Key used by the classifier.</p>
         </div>
         <div>
-          <label>Department</label>
+          <label>Route To Department</label>
           <input class="rule-department" value="${safeDepartment}" placeholder="e.g. City Clerk" />
         </div>
         <div>
-          <label>Keywords</label>
-          <input class="rule-keywords" value="${safeKeywords}" placeholder="comma-separated" />
-        </div>
-        <div>
-          <label>Required Fields</label>
-          <input class="rule-required" value="${safeRequired}" placeholder="comma-separated" />
+          <label>Trigger Keywords</label>
+          <textarea class="rule-keywords" rows="2" placeholder="permit, construction, site plan">${safeKeywords}</textarea>
+          <p class="hint">Any matching keyword routes to this type.</p>
         </div>
       </div>
+      <details class="rule-advanced">
+        <summary>Advanced</summary>
+        <label>Required Fields (comma-separated)</label>
+        <input class="rule-required" value="${safeRequired}" placeholder="applicant_name, date" />
+      </details>
       <div class="actions">
         <button type="button" class="secondary rule-remove" ${locked ? "disabled" : ""}>Remove</button>
       </div>
@@ -228,8 +233,8 @@ function collectRulesFromBuilder() {
     }
 
     const department = String(departmentInput.value || "").trim() || "General Intake";
-    const keywords = parseListInput(keywordsInput.value).map((item) => item.toLowerCase());
-    const requiredFields = parseListInput(requiredInput.value);
+    const keywords = parseListInput(keywordsInput ? keywordsInput.value : "").map((item) => item.toLowerCase());
+    const requiredFields = parseListInput(requiredInput ? requiredInput.value : "");
 
     parsed[docType] = {
       keywords,
@@ -829,14 +834,46 @@ function bindFilters() {
 function bindDatabaseImport() {
   if (!dbImportForm) return;
 
+  const syncDbSourceMode = () => {
+    const usePathMode = Boolean(dbSourcePathRadio?.checked);
+    const contentCard = dbSourceContentRadio?.closest(".choice-card");
+    const pathCard = dbSourcePathRadio?.closest(".choice-card");
+
+    if (dbContentColumnInput) {
+      dbContentColumnInput.disabled = usePathMode;
+      dbContentColumnInput.setAttribute("aria-disabled", usePathMode ? "true" : "false");
+    }
+    if (dbPathColumnInput) {
+      dbPathColumnInput.disabled = !usePathMode;
+      dbPathColumnInput.setAttribute("aria-disabled", !usePathMode ? "true" : "false");
+    }
+
+    if (dbSourceHelper) {
+      dbSourceHelper.textContent = usePathMode
+        ? "Mode: File path selected. Your query must return readable server file paths."
+        : "Mode: Content column selected. Your query should return document content directly.";
+    }
+    if (contentCard) {
+      contentCard.classList.toggle("is-selected", !usePathMode);
+    }
+    if (pathCard) {
+      pathCard.classList.toggle("is-selected", usePathMode);
+    }
+  };
+
+  dbSourceContentRadio?.addEventListener("change", syncDbSourceMode);
+  dbSourcePathRadio?.addEventListener("change", syncDbSourceMode);
+  syncDbSourceMode();
+
   dbImportForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
     const databaseUrl = optionalInputValue(dbUrlInput);
     const query = optionalInputValue(dbQueryInput);
     const filenameColumn = optionalInputValue(dbFilenameColumnInput) || "filename";
-    const contentColumn = optionalInputValue(dbContentColumnInput);
-    const filePathColumn = optionalInputValue(dbPathColumnInput);
+    const sourceMode = dbSourcePathRadio?.checked ? "path" : "content";
+    const contentColumn = sourceMode === "content" ? (optionalInputValue(dbContentColumnInput) || "content") : null;
+    const filePathColumn = sourceMode === "path" ? (optionalInputValue(dbPathColumnInput) || "file_path") : null;
 
     if (!databaseUrl) {
       dbImportStatus.textContent = "Database URL is required.";
@@ -847,9 +884,8 @@ function bindDatabaseImport() {
       dbImportStatus.textContent = "SQL query is required.";
       return;
     }
-
-    if (!contentColumn && !filePathColumn) {
-      dbImportStatus.textContent = "Set a content column or file path column.";
+    if (!/^\s*select\b/i.test(query)) {
+      dbImportStatus.textContent = "Use a read-only SELECT query.";
       return;
     }
 
