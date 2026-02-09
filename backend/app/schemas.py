@@ -128,6 +128,19 @@ class DatabaseImportResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class ConnectorTestRequest(BaseModel):
+    connector_type: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    database_url: Optional[str] = None
+
+
+class ConnectorTestResponse(BaseModel):
+    success: bool
+    message: str
+    connector_type: str
+    details: Optional[str] = None
+
+
 class ServiceHealth(BaseModel):
     name: str
     status: str

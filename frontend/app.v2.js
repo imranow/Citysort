@@ -2,8 +2,14 @@ const uploadForm = document.getElementById("upload-form");
 const fileInput = document.getElementById("file-input");
 const uploadStatus = document.getElementById("upload-status");
 const platformStatus = document.getElementById("platform-status");
-const queueBody = document.getElementById("queue-body");
-const docsBody = document.getElementById("docs-body");
+const queueChips = document.getElementById("queue-chips");
+const queueSummaryBody = document.getElementById("queue-summary-body");
+const reviewSummaryBody = document.getElementById("review-summary-body");
+const reviewListScroll = document.getElementById("review-list-scroll");
+const reviewListCount = document.getElementById("review-list-count");
+const reviewDetailContent = document.getElementById("review-detail-content");
+const reviewEmptyState = document.getElementById("review-empty-state");
+const reviewIssues = document.getElementById("review-issues");
 const refreshButton = document.getElementById("refresh");
 const lastUpdated = document.getElementById("last-updated");
 const docsButton = document.getElementById("docs-btn");
@@ -13,8 +19,8 @@ const connectButton = document.getElementById("connect-btn");
 const deployButton = document.getElementById("deploy-btn");
 
 const filterStatus = document.getElementById("filter-status");
-const filterDepartment = document.getElementById("filter-department");
 const filterSearch = document.getElementById("filter-search");
+let activeDepartmentFilter = "";
 
 const reviewForm = document.getElementById("review-form");
 const rejectButton = document.getElementById("reject");
@@ -25,30 +31,42 @@ const reviewDocType = document.getElementById("review-doc-type");
 const reviewDepartment = document.getElementById("review-department");
 const reviewNotes = document.getElementById("review-notes");
 const reviewFieldsJson = document.getElementById("review-fields-json");
-const dbImportForm = document.getElementById("db-import-form");
-const dbUrlInput = document.getElementById("db-url");
-const dbQueryInput = document.getElementById("db-query");
-const dbFilenameColumnInput = document.getElementById("db-filename-column");
-const dbContentColumnInput = document.getElementById("db-content-column");
-const dbPathColumnInput = document.getElementById("db-path-column");
-const dbContentTypeColumnInput = document.getElementById("db-content-type-column");
-const dbLimitInput = document.getElementById("db-limit");
-const dbProcessAsync = document.getElementById("db-process-async");
-const dbImportStatus = document.getElementById("db-import-status");
-const dbImportSubmit = document.getElementById("db-import-submit");
-const dbSourceContentRadio = document.getElementById("db-source-content");
-const dbSourcePathRadio = document.getElementById("db-source-path");
-const dbSourceHelper = document.getElementById("db-source-helper");
+const connectorsGrid = document.getElementById("connectors-grid");
+const connectorConfig = document.getElementById("connector-config");
+const connectorBackBtn = document.getElementById("connector-back");
+const connectorConfigHeader = document.getElementById("connector-config-header");
+const connectorConfigFields = document.getElementById("connector-config-fields");
+const connectorConfigForm = document.getElementById("connector-config-form");
+const connectorTestBtn = document.getElementById("connector-test-btn");
+const connectorImportBtn = document.getElementById("connector-import-btn");
+const connectorStatus = document.getElementById("connector-status");
+const connectorQuerySection = document.getElementById("connector-query-section");
+let activeConnectorId = null;
 
-const reviewSelected = document.getElementById("review-selected");
-const reviewCurrentStatus = document.getElementById("review-current-status");
-const reviewCurrentType = document.getElementById("review-current-type");
-const reviewCurrentDepartment = document.getElementById("review-current-department");
-const reviewCurrentConfidence = document.getElementById("review-current-confidence");
+const reviewFilename = document.getElementById("review-filename");
+const reviewBadgeStatus = document.getElementById("review-badge-status");
+const reviewBadgeType = document.getElementById("review-badge-type");
+const reviewBadgeDept = document.getElementById("review-badge-dept");
+const reviewConfBar = document.getElementById("review-conf-bar");
+const reviewConfPct = document.getElementById("review-conf-pct");
 const reviewMissing = document.getElementById("review-missing");
 const reviewErrors = document.getElementById("review-errors");
-const reviewTextPreview = document.getElementById("review-text-preview");
+const reviewMissingSection = document.getElementById("review-missing-section");
+const reviewErrorsSection = document.getElementById("review-errors-section");
 const reviewAudit = document.getElementById("review-audit");
+
+const detailTabs = document.getElementById("detail-tabs");
+const detailPanelReview = document.getElementById("detail-panel-review");
+const detailPanelDocument = document.getElementById("detail-panel-document");
+const docDownloadBtn = document.getElementById("doc-download-btn");
+const docReuploadInput = document.getElementById("doc-reupload-input");
+const docReuploadStatus = document.getElementById("doc-reupload-status");
+const docTextPreview = document.getElementById("doc-text-preview");
+const docFieldsEditor = document.getElementById("doc-fields-editor");
+const docFieldsSave = document.getElementById("doc-fields-save");
+const docFieldsStatus = document.getElementById("doc-fields-status");
+let _originalFields = {};
+let _currentDocForDocTab = null;
 
 const rulesMeta = document.getElementById("rules-meta");
 const rulesLoad = document.getElementById("rules-load");
@@ -170,32 +188,24 @@ function buildRuleRowHtml(docType, rule) {
   const safeRequired = escapeHtml(formatListInput(rule.required_fields || []));
 
   return `
-    <div class="rule-row" data-rule-row="${safeType}">
-      <div class="rule-row-grid">
-        <div>
-          <label>Document Type</label>
-          <input class="rule-doc-type" value="${safeType}" ${locked ? "readonly" : ""} />
-          <p class="hint">Key used by the classifier.</p>
-        </div>
-        <div>
-          <label>Route To Department</label>
-          <input class="rule-department" value="${safeDepartment}" placeholder="e.g. City Clerk" />
-        </div>
-        <div>
-          <label>Trigger Keywords</label>
-          <textarea class="rule-keywords" rows="2" placeholder="permit, construction, site plan">${safeKeywords}</textarea>
-          <p class="hint">Any matching keyword routes to this type.</p>
-        </div>
-      </div>
-      <details class="rule-advanced">
-        <summary>Advanced</summary>
-        <label>Required Fields (comma-separated)</label>
-        <input class="rule-required" value="${safeRequired}" placeholder="applicant_name, date" />
-      </details>
-      <div class="actions">
-        <button type="button" class="secondary rule-remove" ${locked ? "disabled" : ""}>Remove</button>
-      </div>
-    </div>
+    <tr class="rule-row" data-rule-row="${safeType}">
+      <td data-label="Document Type">
+        <input class="rule-doc-type rule-input" value="${safeType}" ${locked ? "readonly" : ""} />
+        <input type="hidden" class="rule-required" value="${safeRequired}" />
+      </td>
+      <td data-label="Department">
+        <input class="rule-department rule-input" value="${safeDepartment}" placeholder="e.g. City Clerk" />
+      </td>
+      <td data-label="Keywords">
+        <input class="rule-keywords rule-input" value="${safeKeywords}" placeholder="permit, construction, site plan" />
+      </td>
+      <td class="rule-actions-cell">
+        <button type="button" class="rule-expand-btn" title="Edit required fields" aria-label="Edit required fields">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+        </button>
+        <button type="button" class="rule-remove" ${locked ? "disabled" : ""} title="Remove rule" aria-label="Remove rule">&times;</button>
+      </td>
+    </tr>
   `;
 }
 
@@ -206,7 +216,22 @@ function renderRulesBuilder(rules) {
     return;
   }
 
-  rulesBuilder.innerHTML = keys.map((docType) => buildRuleRowHtml(docType, rules[docType] || {})).join("");
+  const rows = keys.map((docType) => buildRuleRowHtml(docType, rules[docType] || {})).join("");
+  rulesBuilder.innerHTML = `
+    <div class="table-scroll">
+      <table class="rules-table">
+        <thead>
+          <tr>
+            <th>Document Type</th>
+            <th>Route To Department</th>
+            <th>Trigger Keywords</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function collectRulesFromBuilder() {
@@ -448,18 +473,84 @@ function auditToText(items) {
     .join("\n");
 }
 
-function markSelectedDocumentRow() {
-  const rows = docsBody.querySelectorAll("tr[data-doc-id]");
-  rows.forEach((row) => {
-    const isSelected = row.dataset.docId === selectedDocumentId;
-    row.classList.toggle("is-selected", isSelected);
-
-    const button = row.querySelector(".review-btn");
-    if (button instanceof HTMLButtonElement) {
-      button.classList.toggle("active", isSelected);
-      button.textContent = isSelected ? "Opened" : "Open";
-    }
+function markSelectedDocumentCard() {
+  if (!reviewListScroll) return;
+  const cards = reviewListScroll.querySelectorAll(".doc-card[data-doc-id]");
+  cards.forEach((card) => {
+    card.classList.toggle("is-selected", card.dataset.docId === selectedDocumentId);
   });
+}
+
+function showReviewDetail() {
+  if (reviewEmptyState) reviewEmptyState.style.display = "none";
+  if (reviewDetailContent) reviewDetailContent.style.display = "block";
+}
+
+function hideReviewDetail() {
+  if (reviewEmptyState) reviewEmptyState.style.display = "flex";
+  if (reviewDetailContent) reviewDetailContent.style.display = "none";
+}
+
+/* ── Detail-pane tab switching ────────────────────── */
+
+function switchDetailTab(tabName) {
+  if (!detailTabs) return;
+  detailTabs.querySelectorAll(".detail-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.detailTab === tabName);
+  });
+  document.querySelectorAll(".detail-tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.detailPanel === tabName);
+  });
+}
+
+/* ── Extracted fields editor ─────────────────────── */
+
+function renderFieldsEditor(extractedFields, missingFields) {
+  if (!docFieldsEditor) return;
+  const fields = extractedFields && typeof extractedFields === "object" ? extractedFields : {};
+  const missing = Array.isArray(missingFields) ? missingFields : [];
+  _originalFields = { ...fields };
+
+  const allKeys = new Set([...Object.keys(fields), ...missing]);
+  if (!allKeys.size) {
+    docFieldsEditor.innerHTML = '<p class="status">No extracted fields available.</p>';
+    if (docFieldsSave) docFieldsSave.disabled = true;
+    return;
+  }
+
+  let html = "";
+  for (const key of allKeys) {
+    const value = fields[key] !== undefined && fields[key] !== null ? String(fields[key]) : "";
+    const isMissing = missing.includes(key) && !value;
+    const safeKey = escapeHtml(key);
+    const safeValue = escapeHtml(value);
+    html += `<div class="doc-field-row" data-field-key="${safeKey}">
+      <span class="doc-field-key${isMissing ? " is-missing" : ""}" title="${safeKey}">${safeKey}</span>
+      <input class="doc-field-value" data-field="${safeKey}" value="${safeValue}" placeholder="${isMissing ? "Missing \u2014 enter value" : ""}" />
+    </div>`;
+  }
+  docFieldsEditor.innerHTML = html;
+  if (docFieldsSave) docFieldsSave.disabled = true;
+}
+
+function collectFieldsFromEditor() {
+  if (!docFieldsEditor) return {};
+  const fields = {};
+  docFieldsEditor.querySelectorAll(".doc-field-value").forEach((input) => {
+    const key = input.dataset.field;
+    if (key) fields[key] = input.value.trim();
+  });
+  return fields;
+}
+
+function hasFieldChanges() {
+  const current = collectFieldsFromEditor();
+  for (const key of Object.keys(current)) {
+    const original = _originalFields[key] !== undefined && _originalFields[key] !== null
+      ? String(_originalFields[key]) : "";
+    if (current[key] !== original) return true;
+  }
+  return false;
 }
 
 function populateDocTypeOptions(rules) {
@@ -488,24 +579,47 @@ function renderReviewDocument(doc, auditItems) {
   const defaultFields = doc.extracted_fields && typeof doc.extracted_fields === "object" ? doc.extracted_fields : {};
   reviewFieldsJson.value = JSON.stringify(defaultFields, null, 2);
 
-  reviewSelected.textContent = `Selected: ${doc.filename}`;
-  reviewCurrentStatus.textContent = `Status: ${doc.status}${doc.requires_review ? " (review)" : ""}`;
-  reviewCurrentType.textContent = `Type: ${doc.doc_type || "unclassified"}`;
-  reviewCurrentDepartment.textContent = `Department: ${doc.department || "-"}`;
-  reviewCurrentConfidence.textContent = `Confidence: ${percent(doc.confidence)}`;
+  // Detail header
+  const statusText = doc.status + (doc.requires_review ? " (review)" : "");
+  const confidenceVal = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
+  const confidencePct = Math.round(confidenceVal * 100);
 
+  reviewFilename.textContent = doc.filename;
+  reviewBadgeStatus.textContent = statusText;
+  reviewBadgeStatus.className = statusBadgeClass(doc);
+  reviewBadgeType.textContent = doc.doc_type || "unclassified";
+  reviewBadgeDept.textContent = doc.department || "-";
+  reviewConfBar.style.width = confidencePct + "%";
+  reviewConfPct.textContent = confidencePct + "%";
+
+  // Progressive disclosure: issues
+  const hasMissing = doc.missing_fields && doc.missing_fields.length > 0;
+  const hasErrors = doc.validation_errors && doc.validation_errors.length > 0;
+  if (reviewIssues) reviewIssues.style.display = (hasMissing || hasErrors) ? "block" : "none";
+  if (reviewMissingSection) reviewMissingSection.style.display = hasMissing ? "block" : "none";
+  if (reviewErrorsSection) reviewErrorsSection.style.display = hasErrors ? "block" : "none";
   reviewMissing.textContent = lineList(doc.missing_fields);
   reviewErrors.textContent = lineList(doc.validation_errors);
 
-  if (doc.extracted_text) {
-    reviewTextPreview.textContent = doc.extracted_text.slice(0, 4000);
-  } else {
-    reviewTextPreview.textContent = "-";
-  }
-
   reviewAudit.textContent = auditToText(auditItems);
-  reviewStatus.textContent = `Reviewing ${doc.filename}`;
-  markSelectedDocumentRow();
+  reviewStatus.textContent = "";
+
+  // Populate Document tab
+  _currentDocForDocTab = doc;
+  if (docTextPreview) {
+    docTextPreview.textContent = doc.extracted_text
+      ? doc.extracted_text.slice(0, 8000)
+      : "No extracted text available.";
+  }
+  renderFieldsEditor(doc.extracted_fields, doc.missing_fields);
+  if (docReuploadStatus) docReuploadStatus.textContent = "";
+  if (docFieldsStatus) docFieldsStatus.textContent = "";
+
+  // Reset to Review tab when selecting a new document
+  switchDetailTab("review");
+
+  showReviewDetail();
+  markSelectedDocumentCard();
 }
 
 function clearReviewSelection(message) {
@@ -515,16 +629,23 @@ function clearReviewSelection(message) {
   reviewDepartment.value = "";
   reviewNotes.value = "";
   reviewFieldsJson.value = "{}";
-  reviewSelected.textContent = message || "Select a document from the worklist.";
-  reviewCurrentStatus.textContent = "Status: -";
-  reviewCurrentType.textContent = "Type: -";
-  reviewCurrentDepartment.textContent = "Department: -";
-  reviewCurrentConfidence.textContent = "Confidence: -";
   reviewMissing.textContent = "-";
   reviewErrors.textContent = "-";
-  reviewTextPreview.textContent = "-";
   reviewAudit.textContent = "-";
-  markSelectedDocumentRow();
+  reviewStatus.textContent = "";
+
+  // Clear Document tab state
+  _currentDocForDocTab = null;
+  _originalFields = {};
+  if (docTextPreview) docTextPreview.textContent = "-";
+  if (docFieldsEditor) docFieldsEditor.innerHTML = "";
+  if (docReuploadStatus) docReuploadStatus.textContent = "";
+  if (docFieldsStatus) docFieldsStatus.textContent = "";
+  if (docFieldsSave) docFieldsSave.disabled = true;
+  switchDetailTab("review");
+
+  hideReviewDetail();
+  markSelectedDocumentCard();
 }
 
 function connectivitySummary(data) {
@@ -578,89 +699,137 @@ async function loadAnalytics() {
   prevMetrics.confidence = Math.round(conf * 100);
 }
 
+let _lastQueueData = [];
+
 async function loadQueues() {
   const data = await parseJSON(await apiFetch("/api/queues"));
-  if (!data.queues.length) {
-    queueBody.innerHTML = '<tr><td colspan="4"><div class="table-empty">' +
-      '<svg class="table-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="8" width="36" height="32" rx="4"/><path d="M6 18h36M18 18v22"/></svg>' +
-      '<p class="table-empty-title">No department queues</p>' +
-      '<p class="table-empty-desc">Queues appear after documents are processed and routed to departments.</p>' +
-      '</div></td></tr>';
+  _lastQueueData = data.queues || [];
+
+  const totalAll = _lastQueueData.reduce((s, q) => s + q.total, 0);
+  const reviewAll = _lastQueueData.reduce((s, q) => s + q.needs_review, 0);
+
+  if (!_lastQueueData.length) {
+    if (queueChips) queueChips.innerHTML = '<span class="review-list-count">No department queues yet</span>';
+    if (queueSummaryBody) queueSummaryBody.innerHTML = '<span class="review-list-count">No queues</span>';
     return;
   }
 
-  queueBody.innerHTML = data.queues
-    .map(
-      (queue) => `
-      <tr>
-        <td>${escapeHtml(queue.department || "-")}</td>
-        <td>${queue.total}</td>
-        <td>${queue.needs_review}</td>
-        <td>${queue.ready}</td>
-      </tr>
-    `,
-    )
-    .join("");
+  // Build chip HTML
+  const buildChip = (dept, label, total, needsReview, interactive) => {
+    const active = dept === activeDepartmentFilter ? " active" : "";
+    const tag = interactive ? "button" : "span";
+    const reviewBadge = needsReview > 0
+      ? `<span class="queue-chip-review">${needsReview}</span>`
+      : "";
+    return `<${tag} class="queue-chip${active}" data-department="${escapeHtml(dept)}">${escapeHtml(label)} <span class="queue-chip-count">${total}</span>${reviewBadge}</${tag}>`;
+  };
+
+  // Main chips (interactive)
+  if (queueChips) {
+    let html = buildChip("", "All", totalAll, reviewAll, true);
+    _lastQueueData.forEach((q) => {
+      html += buildChip(q.department || "-", q.department || "-", q.total, q.needs_review, true);
+    });
+    queueChips.innerHTML = html;
+  }
+
+  // Overview summary chips (non-interactive)
+  if (queueSummaryBody) {
+    let html = "";
+    _lastQueueData.forEach((q) => {
+      html += buildChip(q.department || "-", q.department || "-", q.total, q.needs_review, false);
+    });
+    queueSummaryBody.innerHTML = html;
+  }
 }
 
 async function loadDocuments() {
   const params = new URLSearchParams({ limit: "200" });
 
-  if (filterStatus.value) {
+  if (filterStatus && filterStatus.value) {
     params.set("status", filterStatus.value);
   }
 
-  const departmentFilter = filterDepartment.value.trim();
-  if (departmentFilter) {
-    params.set("department", departmentFilter);
+  if (activeDepartmentFilter) {
+    params.set("department", activeDepartmentFilter);
   }
 
-  const data = await parseJSON(await apiFetch(`/api/documents?${params.toString()}`));
-  let items = data.items;
+  const listResponsePromise = apiFetch(`/api/documents?${params.toString()}`);
+  const summaryResponsePromise = reviewSummaryBody ? apiFetch("/api/documents?limit=200") : null;
 
-  const search = filterSearch.value.trim().toLowerCase();
+  const listData = await parseJSON(await listResponsePromise);
+  let items = listData.items || [];
+  let summaryItems = [];
+
+  if (summaryResponsePromise) {
+    const summaryData = await parseJSON(await summaryResponsePromise);
+    summaryItems = summaryData.items || [];
+  }
+
+  const search = filterSearch ? filterSearch.value.trim().toLowerCase() : "";
   if (search) {
     items = items.filter((doc) => doc.filename.toLowerCase().includes(search));
   }
 
-  if (!items.length) {
-    docsBody.innerHTML = '<tr><td colspan="6"><div class="table-empty">' +
-      '<svg class="table-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h14l10 10v24a4 4 0 01-4 4H14a4 4 0 01-4-4V10a4 4 0 014-4z"/><path d="M28 6v10h10"/><path d="M18 28h12M18 34h8"/></svg>' +
-      '<p class="table-empty-title">No matching documents</p>' +
-      '<p class="table-empty-desc">Upload documents or adjust your filters to see records here.</p>' +
-      '</div></td></tr>';
-    return;
+  // Update count
+  if (reviewListCount) {
+    reviewListCount.textContent = `${items.length} document${items.length !== 1 ? "s" : ""}`;
   }
 
-  docsBody.innerHTML = items
-    .map((doc) => {
-      const statusText = doc.requires_review ? `${doc.status} (review)` : doc.status;
-      const confidenceValue = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
-      const confidencePct = Math.round(confidenceValue * 100);
-      const safeDocId = escapeHtml(doc.id);
-      const safeFilename = escapeHtml(doc.filename);
-      const safeDocType = escapeHtml(doc.doc_type || "-");
-      const safeDepartment = escapeHtml(doc.department || "-");
-      const safeStatusText = escapeHtml(statusText);
-      return `
-        <tr data-doc-id="${safeDocId}">
-          <td class="doc-file">${safeFilename}</td>
-          <td><span class="pill">${safeDocType}</span></td>
-          <td>${safeDepartment}</td>
-          <td><span class="${statusBadgeClass(doc)}">${safeStatusText}</span></td>
-          <td>
-            <div class="confidence-cell">
-              <span class="confidence-value">${confidencePct}%</span>
-              <span class="confidence-track"><span style="width:${confidencePct}%"></span></span>
-            </div>
-          </td>
-          <td><button class="secondary review-btn" data-id="${safeDocId}">Open</button></td>
-        </tr>
-      `;
-    })
-    .join("");
+  if (selectedDocumentId && !items.some((doc) => doc.id === selectedDocumentId)) {
+    clearReviewSelection();
+  }
 
-  markSelectedDocumentRow();
+  if (!items.length) {
+    if (reviewListScroll) {
+      reviewListScroll.innerHTML = '<div class="review-list-empty">' +
+        '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6h14l10 10v24a4 4 0 01-4 4H14a4 4 0 01-4-4V10a4 4 0 014-4z"/><path d="M28 6v10h10"/><path d="M18 28h12M18 34h8"/></svg>' +
+        '<p>No matching documents</p></div>';
+    }
+  } else {
+    // Render document cards in left pane
+    if (reviewListScroll) {
+      reviewListScroll.innerHTML = items.map((doc) => {
+        const statusText = doc.requires_review ? `${doc.status} (review)` : doc.status;
+        const confidenceValue = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
+        const confidencePct = Math.round(confidenceValue * 100);
+        const safeDocId = escapeHtml(doc.id);
+        const safeFilename = escapeHtml(doc.filename);
+        const safeDocType = escapeHtml(doc.doc_type || "unclassified");
+        const safeDepartment = escapeHtml(doc.department || "-");
+        const safeStatusText = escapeHtml(statusText);
+        return `<div class="doc-card${doc.id === selectedDocumentId ? " is-selected" : ""}" data-doc-id="${safeDocId}">
+          <div class="doc-card-top">
+            <span class="doc-card-name">${safeFilename}</span>
+            <span class="${statusBadgeClass(doc)}">${safeStatusText}</span>
+          </div>
+          <div class="doc-card-bottom">
+            <span class="pill">${safeDocType}</span>
+            <span class="doc-card-dept">${safeDepartment}</span>
+            <span class="doc-card-conf">${confidencePct}% <span class="confidence-track"><span style="width:${confidencePct}%"></span></span></span>
+          </div>
+        </div>`;
+      }).join("");
+    }
+  }
+
+  // Overview: top 5 needing review
+  if (reviewSummaryBody) {
+    const source = summaryItems.length ? summaryItems : listData.items || [];
+    const needsReview = source.filter((d) => d.requires_review || d.status === "needs_review").slice(0, 5);
+    if (!needsReview.length) {
+      reviewSummaryBody.innerHTML = '<span class="review-list-count">All documents reviewed ✓</span>';
+    } else {
+      reviewSummaryBody.innerHTML = needsReview.map((doc) => {
+        const safeId = escapeHtml(doc.id);
+        return `<div class="review-summary-row" data-doc-id="${safeId}">
+          <span class="review-summary-name">${escapeHtml(doc.filename)}</span>
+          <span class="pill">${escapeHtml(doc.doc_type || "-")}</span>
+          <span class="${statusBadgeClass(doc)}">${escapeHtml(doc.status)}</span>
+        </div>`;
+      }).join("");
+    }
+  }
 }
 
 async function loadRulesConfig() {
@@ -752,6 +921,13 @@ function addNewRuleType() {
   populateDocTypeOptions(activeRules);
   rulesJson.value = JSON.stringify(activeRules, null, 2);
   rulesStatus.textContent = `Added ${nextKey}. Fill it out and click Save Rules.`;
+
+  const newRow = rulesBuilder.querySelector(`[data-rule-row="${escapeHtml(nextKey)}"]`);
+  if (newRow) {
+    newRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    const typeInput = newRow.querySelector(".rule-doc-type");
+    if (typeInput) typeInput.focus();
+  }
 }
 
 function showMetricsSkeleton() {
@@ -777,8 +953,14 @@ function showTableSkeleton(tbody, cols, rows) {
 
 async function loadAll() {
   showMetricsSkeleton();
-  showTableSkeleton(queueBody, 4);
-  showTableSkeleton(docsBody, 6);
+  // Show skeleton in left pane
+  if (reviewListScroll) {
+    let skeletonHtml = "";
+    for (let i = 0; i < 6; i++) {
+      skeletonHtml += '<div class="doc-card" style="pointer-events:none"><div class="doc-card-top"><span class="skeleton" style="width:60%;height:0.75rem"></span><span class="skeleton" style="width:4rem;height:0.75rem"></span></div><div class="doc-card-bottom"><span class="skeleton" style="width:4rem;height:0.625rem"></span><span class="skeleton" style="width:5rem;height:0.625rem"></span></div></div>';
+    }
+    reviewListScroll.innerHTML = skeletonHtml;
+  }
   await Promise.all([loadAnalytics(), loadQueues(), loadDocuments()]);
   if (lastUpdated) {
     lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
@@ -798,144 +980,424 @@ async function loadPlatformSummary() {
 }
 
 function bindDocumentClicks() {
-  docsBody.addEventListener("click", async (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    if (!target.classList.contains("review-btn")) return;
+  // Document cards in left pane
+  if (reviewListScroll) {
+    reviewListScroll.addEventListener("click", async (event) => {
+      const card = event.target.closest(".doc-card");
+      if (!card) return;
+      const docId = card.dataset.docId;
+      if (!docId) return;
 
-    const docId = target.dataset.id;
-    if (!docId) return;
+      try {
+        const [doc, audit] = await Promise.all([
+          parseJSON(await apiFetch(`/api/documents/${docId}`)),
+          parseJSON(await apiFetch(`/api/documents/${docId}/audit?limit=30`)),
+        ]);
+        renderReviewDocument(doc, audit.items || []);
+      } catch (error) {
+        showToast("Failed to load document: " + error.message, "error");
+      }
+    });
+  }
 
-    try {
-      const [doc, audit] = await Promise.all([
-        parseJSON(await apiFetch(`/api/documents/${docId}`)),
-        parseJSON(await apiFetch(`/api/documents/${docId}/audit?limit=30`)),
-      ]);
-      renderReviewDocument(doc, audit.items || []);
-    } catch (error) {
-      reviewStatus.textContent = `Failed to load document details: ${error.message}`;
-    }
-  });
+  // Queue chips click
+  if (queueChips) {
+    queueChips.addEventListener("click", (event) => {
+      const chip = event.target.closest(".queue-chip");
+      if (!chip) return;
+      queueChips.querySelectorAll(".queue-chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      activeDepartmentFilter = chip.dataset.department || "";
+      loadDocuments().catch(() => {});
+    });
+  }
+
+  // Overview summary row clicks → navigate to review
+  if (reviewSummaryBody) {
+    reviewSummaryBody.addEventListener("click", (event) => {
+      const row = event.target.closest(".review-summary-row");
+      if (!row) return;
+      const docId = row.dataset.docId;
+      window.location.href = `/?page=queues&doc=${encodeURIComponent(docId)}`;
+    });
+  }
 }
 
 function bindFilters() {
   const trigger = () => {
     loadDocuments().catch((error) => {
-      uploadStatus.textContent = `Failed to load documents: ${error.message}`;
+      console.error("Failed to load documents:", error.message);
     });
   };
   const debouncedTrigger = debounce(trigger, 220);
 
-  filterStatus.addEventListener("change", trigger);
-  filterDepartment.addEventListener("input", debouncedTrigger);
-  filterSearch.addEventListener("input", debouncedTrigger);
+  if (filterStatus) filterStatus.addEventListener("change", trigger);
+  if (filterSearch) filterSearch.addEventListener("input", debouncedTrigger);
 }
 
-function bindDatabaseImport() {
-  if (!dbImportForm) return;
+/* ═══════════════════════════════════════════════════
+   Connectors — registry, grid, config, test, import
+   ═══════════════════════════════════════════════════ */
 
-  const syncDbSourceMode = () => {
-    const usePathMode = Boolean(dbSourcePathRadio?.checked);
-    const contentCard = dbSourceContentRadio?.closest(".choice-card");
-    const pathCard = dbSourcePathRadio?.closest(".choice-card");
+const _cIcon = {
+  postgresql: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="10" rx="14" ry="5"/><path d="M6 10v20c0 2.76 6.27 5 14 5s14-2.24 14-5V10"/><path d="M6 18c0 2.76 6.27 5 14 5s14-2.24 14-5"/><path d="M6 26c0 2.76 6.27 5 14 5s14-2.24 14-5"/></svg>',
+  mysql: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="20" cy="10" rx="14" ry="5"/><path d="M6 10v20c0 2.76 6.27 5 14 5s14-2.24 14-5V10"/><path d="M6 20c0 2.76 6.27 5 14 5s14-2.24 14-5"/></svg>',
+  sqlite: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5h14l8 8v22H10z"/><path d="M24 5v8h8"/><ellipse cx="20" cy="24" rx="6" ry="2.5"/><path d="M14 24v6c0 1.38 2.69 2.5 6 2.5s6-1.12 6-2.5v-6"/></svg>',
+  servicenow: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="14"/><path d="M20 12v5"/><path d="M20 23v5"/><path d="M12 20h5"/><path d="M23 20h5"/><circle cx="20" cy="20" r="3"/></svg>',
+  confluence: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h24v18H8z"/><path d="M12 12V8h16v4"/><path d="M14 18h12"/><path d="M14 22h8"/><path d="M14 26h10"/></svg>',
+  salesforce: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 24c-3 0-5-2.5-5-5.5S7 13 10 13c1-3 4-5 7.5-5 3 0 5.5 1.5 6.5 4 1-.5 2-.8 3-.8 3.5 0 6.5 3 6.5 6.3 0 3.3-3 6.5-6.5 6.5H10z"/></svg>',
+  google_cloud_storage: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6l14 8v12l-14 8-14-8V14z"/><path d="M20 6v28"/><path d="M6 14l14 8 14-8"/></svg>',
+  amazon_s3: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8h16v24H12z"/><ellipse cx="20" cy="8" rx="8" ry="3"/><ellipse cx="20" cy="32" rx="8" ry="3"/><path d="M12 20c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>',
+  jira: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6l14 14-14 14L6 20z"/><circle cx="20" cy="20" r="4"/></svg>',
+  sharepoint: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="15" r="8"/><circle cx="14" cy="25" r="6"/><circle cx="26" cy="25" r="6"/></svg>',
+};
 
-    if (dbContentColumnInput) {
-      dbContentColumnInput.disabled = usePathMode;
-      dbContentColumnInput.setAttribute("aria-disabled", usePathMode ? "true" : "false");
-    }
-    if (dbPathColumnInput) {
-      dbPathColumnInput.disabled = !usePathMode;
-      dbPathColumnInput.setAttribute("aria-disabled", !usePathMode ? "true" : "false");
-    }
+const CONNECTOR_REGISTRY = {
+  postgresql: {
+    name: "PostgreSQL",
+    category: "database",
+    status: "available",
+    icon: _cIcon.postgresql,
+    fields: [
+      { id: "host", label: "Host", type: "text", placeholder: "localhost", required: true },
+      { id: "port", label: "Port", type: "number", placeholder: "5432", defaultVal: "5432" },
+      { id: "database", label: "Database", type: "text", placeholder: "mydb", required: true },
+      { id: "username", label: "Username", type: "text", placeholder: "postgres", required: true },
+      { id: "password", label: "Password", type: "password", placeholder: "", required: true, sensitive: true },
+    ],
+    buildDatabaseUrl: (v) => `postgresql://${encodeURIComponent(v.username || "")}:${encodeURIComponent(v.password || "")}@${v.host || "localhost"}:${v.port || 5432}/${v.database || ""}`,
+    hasQuery: true,
+  },
+  mysql: {
+    name: "MySQL",
+    category: "database",
+    status: "available",
+    icon: _cIcon.mysql,
+    fields: [
+      { id: "host", label: "Host", type: "text", placeholder: "localhost", required: true },
+      { id: "port", label: "Port", type: "number", placeholder: "3306", defaultVal: "3306" },
+      { id: "database", label: "Database", type: "text", placeholder: "mydb", required: true },
+      { id: "username", label: "Username", type: "text", placeholder: "root", required: true },
+      { id: "password", label: "Password", type: "password", placeholder: "", required: true, sensitive: true },
+    ],
+    buildDatabaseUrl: (v) => `mysql+pymysql://${encodeURIComponent(v.username || "")}:${encodeURIComponent(v.password || "")}@${v.host || "localhost"}:${v.port || 3306}/${v.database || ""}`,
+    hasQuery: true,
+  },
+  sqlite: {
+    name: "SQLite",
+    category: "database",
+    status: "available",
+    icon: _cIcon.sqlite,
+    fields: [
+      { id: "filepath", label: "File Path", type: "text", placeholder: "/path/to/database.db", required: true },
+    ],
+    buildDatabaseUrl: (v) => v.filepath || "",
+    hasQuery: true,
+  },
+  servicenow: {
+    name: "ServiceNow",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.servicenow,
+    fields: [
+      { id: "instance_url", label: "Instance URL", type: "url", placeholder: "https://yourinstance.service-now.com", required: true },
+      { id: "username", label: "Username", type: "text", required: true },
+      { id: "password", label: "Password", type: "password", required: true, sensitive: true },
+      { id: "table_name", label: "Table Name", type: "text", placeholder: "incident", required: true },
+    ],
+    hasQuery: false,
+  },
+  confluence: {
+    name: "Confluence",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.confluence,
+    fields: [
+      { id: "base_url", label: "Base URL", type: "url", placeholder: "https://yoursite.atlassian.net/wiki", required: true },
+      { id: "email", label: "Email", type: "email", required: true },
+      { id: "api_token", label: "API Token", type: "password", required: true, sensitive: true },
+      { id: "space_key", label: "Space Key", type: "text", placeholder: "MYSPACE", required: true },
+    ],
+    hasQuery: false,
+  },
+  salesforce: {
+    name: "Salesforce",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.salesforce,
+    fields: [
+      { id: "instance_url", label: "Instance URL", type: "url", placeholder: "https://yourorg.salesforce.com", required: true },
+      { id: "client_id", label: "Client ID", type: "text", required: true },
+      { id: "client_secret", label: "Client Secret", type: "password", required: true, sensitive: true },
+      { id: "username", label: "Username", type: "text", required: true },
+      { id: "password", label: "Password", type: "password", required: true, sensitive: true },
+    ],
+    hasQuery: false,
+  },
+  google_cloud_storage: {
+    name: "Google Cloud Storage",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.google_cloud_storage,
+    fields: [
+      { id: "project_id", label: "Project ID", type: "text", required: true },
+      { id: "bucket_name", label: "Bucket Name", type: "text", required: true },
+      { id: "service_account_key", label: "Service Account JSON Key", type: "textarea", required: true, sensitive: true },
+    ],
+    hasQuery: false,
+  },
+  amazon_s3: {
+    name: "Amazon S3",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.amazon_s3,
+    fields: [
+      { id: "bucket_name", label: "Bucket Name", type: "text", required: true },
+      { id: "region", label: "Region", type: "text", placeholder: "us-east-1", required: true },
+      { id: "access_key_id", label: "Access Key ID", type: "text", required: true },
+      { id: "secret_access_key", label: "Secret Access Key", type: "password", required: true, sensitive: true },
+      { id: "prefix", label: "Prefix (optional)", type: "text", placeholder: "documents/" },
+    ],
+    hasQuery: false,
+  },
+  jira: {
+    name: "Jira",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.jira,
+    fields: [
+      { id: "base_url", label: "Base URL", type: "url", placeholder: "https://yoursite.atlassian.net", required: true },
+      { id: "email", label: "Email", type: "email", required: true },
+      { id: "api_token", label: "API Token", type: "password", required: true, sensitive: true },
+      { id: "project_key", label: "Project Key", type: "text", placeholder: "PROJ" },
+      { id: "jql_query", label: "JQL Query (optional)", type: "text", placeholder: "project = PROJ AND status = Done" },
+    ],
+    hasQuery: false,
+  },
+  sharepoint: {
+    name: "SharePoint",
+    category: "saas",
+    status: "coming_soon",
+    icon: _cIcon.sharepoint,
+    fields: [
+      { id: "site_url", label: "Site URL", type: "url", placeholder: "https://yourorg.sharepoint.com/sites/...", required: true },
+      { id: "client_id", label: "Client ID", type: "text", required: true },
+      { id: "client_secret", label: "Client Secret", type: "password", required: true, sensitive: true },
+      { id: "tenant_id", label: "Tenant ID", type: "text", required: true },
+      { id: "library_name", label: "Library Name", type: "text", placeholder: "Documents" },
+    ],
+    hasQuery: false,
+  },
+};
 
-    if (dbSourceHelper) {
-      dbSourceHelper.textContent = usePathMode
-        ? "Mode: File path selected. Your query must return readable server file paths."
-        : "Mode: Content column selected. Your query should return document content directly.";
+const CONNECTOR_STORAGE_KEY = "citysort_connector_configs";
+
+function _loadConnectorConfig(connectorId) {
+  try {
+    const all = JSON.parse(localStorage.getItem(CONNECTOR_STORAGE_KEY) || "{}");
+    return all[connectorId] || {};
+  } catch { return {}; }
+}
+
+function _saveConnectorConfig(connectorId, values) {
+  const connector = CONNECTOR_REGISTRY[connectorId];
+  if (!connector) return;
+  const safe = {};
+  for (const f of connector.fields) {
+    if (!f.sensitive) safe[f.id] = values[f.id] || "";
+  }
+  try {
+    const all = JSON.parse(localStorage.getItem(CONNECTOR_STORAGE_KEY) || "{}");
+    all[connectorId] = safe;
+    localStorage.setItem(CONNECTOR_STORAGE_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+function _getConnectorFieldValues(connectorId) {
+  const connector = CONNECTOR_REGISTRY[connectorId];
+  if (!connector) return {};
+  const values = {};
+  for (const f of connector.fields) {
+    const el = document.getElementById(`cf-${f.id}`);
+    values[f.id] = el ? el.value.trim() : "";
+  }
+  return values;
+}
+
+function _buildConnectorCardHtml(id, connector) {
+  const badge = connector.status === "coming_soon"
+    ? '<span class="connector-badge coming-soon">Coming Soon</span>'
+    : "";
+  return `<button type="button" class="connector-card" data-connector-id="${escapeHtml(id)}">${badge}<div class="connector-card-icon">${connector.icon}</div><span class="connector-card-name">${escapeHtml(connector.name)}</span></button>`;
+}
+
+function renderConnectorsGrid() {
+  if (!connectorsGrid) return;
+  const db = [];
+  const saas = [];
+  for (const [id, c] of Object.entries(CONNECTOR_REGISTRY)) {
+    (c.category === "database" ? db : saas).push({ id, ...c });
+  }
+  let html = '<div class="connectors-category"><h3 class="connectors-category-label">Databases</h3><div class="connectors-card-grid">';
+  for (const c of db) html += _buildConnectorCardHtml(c.id, c);
+  html += '</div></div>';
+  html += '<div class="connectors-category"><h3 class="connectors-category-label">SaaS &amp; Cloud</h3><div class="connectors-card-grid">';
+  for (const c of saas) html += _buildConnectorCardHtml(c.id, c);
+  html += '</div></div>';
+  connectorsGrid.innerHTML = html;
+}
+
+function openConnectorConfig(connectorId) {
+  const connector = CONNECTOR_REGISTRY[connectorId];
+  if (!connector) return;
+  activeConnectorId = connectorId;
+  connectorsGrid.style.display = "none";
+  connectorConfig.style.display = "block";
+
+  connectorConfigHeader.innerHTML = `<div class="connector-config-icon">${connector.icon}</div><div><h3>${escapeHtml(connector.name)}</h3><span class="connector-config-category">${connector.category === "database" ? "Database" : "SaaS Integration"}</span></div>`;
+
+  const saved = _loadConnectorConfig(connectorId);
+  let fieldsHtml = '<div class="connector-fields-grid">';
+  for (const f of connector.fields) {
+    const val = f.sensitive ? "" : (saved[f.id] || f.defaultVal || "");
+    if (f.type === "textarea") {
+      fieldsHtml += `<div class="connector-field"><label for="cf-${f.id}">${escapeHtml(f.label)}</label><textarea id="cf-${f.id}" ${f.required ? "required" : ""} placeholder="${escapeHtml(f.placeholder || "")}" rows="4">${escapeHtml(val)}</textarea></div>`;
+    } else {
+      fieldsHtml += `<div class="connector-field"><label for="cf-${f.id}">${escapeHtml(f.label)}</label><input id="cf-${f.id}" type="${f.type || "text"}" ${f.required ? "required" : ""} placeholder="${escapeHtml(f.placeholder || "")}" value="${escapeHtml(val)}" /></div>`;
     }
-    if (contentCard) {
-      contentCard.classList.toggle("is-selected", !usePathMode);
-    }
-    if (pathCard) {
-      pathCard.classList.toggle("is-selected", usePathMode);
-    }
+  }
+  fieldsHtml += '</div>';
+  connectorConfigFields.innerHTML = fieldsHtml;
+
+  connectorQuerySection.style.display = connector.hasQuery ? "block" : "none";
+
+  if (connector.status === "coming_soon") {
+    connectorImportBtn.disabled = true;
+    connectorImportBtn.textContent = "Import (Coming Soon)";
+  } else {
+    connectorImportBtn.disabled = false;
+    connectorImportBtn.textContent = "Import Documents";
+  }
+  connectorStatus.textContent = "";
+}
+
+function closeConnectorConfig() {
+  activeConnectorId = null;
+  if (connectorConfig) connectorConfig.style.display = "none";
+  if (connectorsGrid) connectorsGrid.style.display = "block";
+}
+
+async function _handleDatabaseImport(connector, values) {
+  const databaseUrl = connector.buildDatabaseUrl(values);
+  const query = optionalInputValue(document.getElementById("connector-query"));
+  if (!query) { connectorStatus.textContent = "SQL query is required."; return; }
+  if (!/^\s*select\b/i.test(query)) { connectorStatus.textContent = "Use a read-only SELECT query."; return; }
+
+  const sourcePathRadio = document.getElementById("connector-source-path");
+  const sourceMode = sourcePathRadio?.checked ? "path" : "content";
+  const contentColumn = sourceMode === "content" ? (optionalInputValue(document.getElementById("connector-content-col")) || "content") : null;
+  const filePathColumn = sourceMode === "path" ? (optionalInputValue(document.getElementById("connector-path-col")) || "file_path") : null;
+  const parsedLimit = Number(document.getElementById("connector-limit")?.value || 500);
+  const limit = Math.max(1, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 500, 5000));
+
+  const payload = {
+    database_url: databaseUrl,
+    query,
+    filename_column: optionalInputValue(document.getElementById("connector-filename-col")) || "filename",
+    content_column: contentColumn,
+    file_path_column: filePathColumn,
+    content_type_column: optionalInputValue(document.getElementById("connector-content-type-col")),
+    source_channel: "connector_" + (activeConnectorId || "database"),
+    actor: "dashboard_admin",
+    process_async: Boolean(document.getElementById("connector-process-async")?.checked),
+    limit,
   };
 
-  dbSourceContentRadio?.addEventListener("change", syncDbSourceMode);
-  dbSourcePathRadio?.addEventListener("change", syncDbSourceMode);
-  syncDbSourceMode();
+  connectorStatus.textContent = "Importing from database...";
+  setButtonBusy(connectorImportBtn, "Importing...", true);
 
-  dbImportForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const databaseUrl = optionalInputValue(dbUrlInput);
-    const query = optionalInputValue(dbQueryInput);
-    const filenameColumn = optionalInputValue(dbFilenameColumnInput) || "filename";
-    const sourceMode = dbSourcePathRadio?.checked ? "path" : "content";
-    const contentColumn = sourceMode === "content" ? (optionalInputValue(dbContentColumnInput) || "content") : null;
-    const filePathColumn = sourceMode === "path" ? (optionalInputValue(dbPathColumnInput) || "file_path") : null;
-
-    if (!databaseUrl) {
-      dbImportStatus.textContent = "Database URL is required.";
-      return;
+  try {
+    const result = await parseJSON(
+      await apiFetch("/api/documents/import/database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+    const msg = `Imported ${result.imported_count} row(s). Failed ${result.failed_count}. Processed ${result.processed_sync_count}, async ${result.scheduled_async_count}.`;
+    if (result.errors && result.errors.length) {
+      connectorStatus.textContent = `${msg} First error: ${result.errors[0]}`;
+      showToast("Import completed with errors", "warning");
+    } else {
+      connectorStatus.textContent = msg;
+      showToast("Import completed: " + result.imported_count + " rows", "success");
     }
+    await loadAll();
+  } catch (error) {
+    connectorStatus.textContent = `Import failed: ${error.message}`;
+    showToast("Import failed: " + error.message, "error");
+  } finally {
+    setButtonBusy(connectorImportBtn, "Importing...", false);
+  }
+}
 
-    if (!query) {
-      dbImportStatus.textContent = "SQL query is required.";
-      return;
-    }
-    if (!/^\s*select\b/i.test(query)) {
-      dbImportStatus.textContent = "Use a read-only SELECT query.";
-      return;
-    }
+function bindConnectors() {
+  if (!connectorsGrid) return;
+  renderConnectorsGrid();
 
-    const parsedLimit = Number(dbLimitInput?.value || 500);
-    const limit = Math.max(1, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 500, 5000));
+  connectorsGrid.addEventListener("click", (event) => {
+    const card = event.target.closest(".connector-card");
+    if (!card) return;
+    openConnectorConfig(card.dataset.connectorId);
+  });
 
-    const payload = {
-      database_url: databaseUrl,
-      query,
-      filename_column: filenameColumn,
-      content_column: contentColumn,
-      file_path_column: filePathColumn,
-      content_type_column: optionalInputValue(dbContentTypeColumnInput),
-      source_channel: "database_import_ui",
-      actor: "dashboard_admin",
-      process_async: Boolean(dbProcessAsync?.checked),
-      limit,
-    };
+  connectorBackBtn?.addEventListener("click", closeConnectorConfig);
 
-    dbImportStatus.textContent = "Importing from database...";
-    setButtonBusy(dbImportSubmit, "Importing...", true);
+  connectorTestBtn?.addEventListener("click", async () => {
+    if (!activeConnectorId) return;
+    const connector = CONNECTOR_REGISTRY[activeConnectorId];
+    const values = _getConnectorFieldValues(activeConnectorId);
+    _saveConnectorConfig(activeConnectorId, values);
+
+    setButtonBusy(connectorTestBtn, "Testing...", true);
+    connectorStatus.textContent = "Testing connection...";
 
     try {
+      const body = { connector_type: activeConnectorId, config: values };
+      if (connector.buildDatabaseUrl) body.database_url = connector.buildDatabaseUrl(values);
+
       const result = await parseJSON(
-        await apiFetch("/api/documents/import/database", {
+        await apiFetch(`/api/connectors/${activeConnectorId}/test`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(body),
         }),
       );
-
-      const baseMessage =
-        `Imported ${result.imported_count} row(s). ` +
-        `Failed ${result.failed_count}. ` +
-        `Processed now ${result.processed_sync_count}, scheduled async ${result.scheduled_async_count}.`;
-
-      if (result.errors && result.errors.length) {
-        dbImportStatus.textContent = `${baseMessage} First error: ${result.errors[0]}`;
-        showToast("Import completed with errors", "warning");
-      } else {
-        dbImportStatus.textContent = baseMessage;
-        showToast("Database import completed: " + result.imported_count + " rows", "success");
-      }
-
-      await loadAll();
+      connectorStatus.textContent = result.message || "Test complete.";
+      showToast(result.message || "Test complete", result.success ? "success" : "warning");
     } catch (error) {
-      dbImportStatus.textContent = `Database import failed: ${error.message}`;
-      showToast("Database import failed: " + error.message, "error");
+      connectorStatus.textContent = `Test failed: ${error.message}`;
+      showToast("Connection test failed", "error");
     } finally {
-      setButtonBusy(dbImportSubmit, "Importing...", false);
+      setButtonBusy(connectorTestBtn, "Testing...", false);
+    }
+  });
+
+  connectorConfigForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!activeConnectorId) return;
+    const connector = CONNECTOR_REGISTRY[activeConnectorId];
+    if (connector.status === "coming_soon") {
+      connectorStatus.textContent = "This connector is coming soon. Your settings have been saved.";
+      return;
+    }
+    const values = _getConnectorFieldValues(activeConnectorId);
+    _saveConnectorConfig(activeConnectorId, values);
+    if (connector.category === "database") {
+      await _handleDatabaseImport(connector, values);
+    } else {
+      connectorStatus.textContent = "SaaS import is not yet implemented.";
+      showToast("SaaS import coming soon", "info");
     }
   });
 }
@@ -965,18 +1427,172 @@ function bindRulesActions() {
 
   rulesBuilder.addEventListener("click", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
-    if (!target.classList.contains("rule-remove")) return;
+    if (!(target instanceof Element)) return;
 
-    const row = target.closest(".rule-row");
-    if (!row) return;
-    row.remove();
-    syncJsonFromBuilder(false);
+    /* ── Remove button ── */
+    const removeBtn = target.closest(".rule-remove");
+    if (removeBtn) {
+      const row = removeBtn.closest(".rule-row");
+      if (!row) return;
+      const editor = row.nextElementSibling;
+      if (editor && editor.classList.contains("rule-required-editor")) editor.remove();
+      row.remove();
+      syncJsonFromBuilder(false);
+      return;
+    }
+
+    /* ── Expand / collapse required-fields editor ── */
+    const expandBtn = target.closest(".rule-expand-btn");
+    if (expandBtn) {
+      const row = expandBtn.closest(".rule-row");
+      if (!row) return;
+
+      const existing = row.nextElementSibling;
+      if (existing && existing.classList.contains("rule-required-editor")) {
+        existing.remove();
+        return;
+      }
+
+      rulesBuilder.querySelectorAll(".rule-required-editor").forEach((el) => el.remove());
+
+      const hiddenInput = row.querySelector(".rule-required");
+      const currentValue = hiddenInput ? hiddenInput.value : "";
+
+      const editorRow = document.createElement("tr");
+      editorRow.className = "rule-required-editor";
+      editorRow.innerHTML = `
+        <td colspan="4">
+          <label>Required Fields (comma-separated)</label>
+          <input class="rule-required-inline rule-input" value="${escapeHtml(currentValue)}" placeholder="applicant_name, date" />
+        </td>
+      `;
+      row.after(editorRow);
+
+      const inlineInput = editorRow.querySelector(".rule-required-inline");
+      inlineInput.addEventListener("input", () => {
+        hiddenInput.value = inlineInput.value;
+        syncJsonFromBuilder(false);
+      });
+      inlineInput.focus();
+    }
   });
 
   rulesBuilder.addEventListener("input", () => {
     syncJsonFromBuilder(false);
   });
+}
+
+/* ── Detail-pane tab & Document tab bindings ─────── */
+
+function bindDetailTabs() {
+  if (!detailTabs) return;
+  detailTabs.addEventListener("click", (event) => {
+    const tab = event.target.closest(".detail-tab");
+    if (!tab) return;
+    switchDetailTab(tab.dataset.detailTab);
+  });
+}
+
+function bindDocumentTab() {
+  // Download via fetch + blob (preserves auth headers)
+  if (docDownloadBtn) {
+    docDownloadBtn.addEventListener("click", async () => {
+      if (!_currentDocForDocTab) return;
+      try {
+        const response = await apiFetch(`/api/documents/${_currentDocForDocTab.id}/download`);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = _currentDocForDocTab.filename || "download";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showToast("Download failed: " + err.message, "error");
+      }
+    });
+  }
+
+  // Re-upload
+  if (docReuploadInput) {
+    docReuploadInput.addEventListener("change", async () => {
+      const file = docReuploadInput.files[0];
+      if (!file || !_currentDocForDocTab) return;
+      if (docReuploadStatus) docReuploadStatus.textContent = "Uploading replacement\u2026";
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("reprocess", "true");
+      try {
+        const updated = await parseJSON(
+          await apiFetch(`/api/documents/${_currentDocForDocTab.id}/reupload`, {
+            method: "POST",
+            body: formData,
+          })
+        );
+        if (docReuploadStatus) docReuploadStatus.textContent = `Replaced with ${file.name}. Document reprocessed.`;
+        showToast("Document replaced and reprocessed", "success");
+        await loadAll();
+        const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
+        renderReviewDocument(updated, audit.items || []);
+        switchDetailTab("document");
+      } catch (error) {
+        if (docReuploadStatus) docReuploadStatus.textContent = `Re-upload failed: ${error.message}`;
+        showToast("Re-upload failed: " + error.message, "error");
+      } finally {
+        docReuploadInput.value = "";
+      }
+    });
+  }
+
+  // Fields editor: detect changes
+  if (docFieldsEditor) {
+    docFieldsEditor.addEventListener("input", (event) => {
+      if (!event.target.classList.contains("doc-field-value")) return;
+      const key = event.target.dataset.field;
+      const original = _originalFields[key] !== undefined && _originalFields[key] !== null
+        ? String(_originalFields[key]) : "";
+      event.target.classList.toggle("is-modified", event.target.value.trim() !== original);
+      if (docFieldsSave) docFieldsSave.disabled = !hasFieldChanges();
+    });
+  }
+
+  // Save field changes
+  if (docFieldsSave) {
+    docFieldsSave.addEventListener("click", async () => {
+      if (!_currentDocForDocTab) return;
+      const correctedFields = collectFieldsFromEditor();
+      const payload = {
+        approve: true,
+        corrected_fields: correctedFields,
+        notes: "Fields corrected via Document tab editor",
+        actor: "dashboard_reviewer",
+      };
+      setButtonBusy(docFieldsSave, "Saving\u2026", true);
+      if (docFieldsStatus) docFieldsStatus.textContent = "Saving field corrections\u2026";
+      try {
+        const updated = await parseJSON(
+          await apiFetch(`/api/documents/${_currentDocForDocTab.id}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        );
+        if (docFieldsStatus) docFieldsStatus.textContent = "Fields saved and document approved.";
+        showToast("Field corrections saved", "success");
+        await loadAll();
+        const audit = await parseJSON(await apiFetch(`/api/documents/${updated.id}/audit?limit=30`));
+        renderReviewDocument(updated, audit.items || []);
+        switchDetailTab("document");
+      } catch (error) {
+        if (docFieldsStatus) docFieldsStatus.textContent = `Save failed: ${error.message}`;
+        showToast("Save failed: " + error.message, "error");
+      } finally {
+        setButtonBusy(docFieldsSave, "Saving\u2026", false);
+      }
+    });
+  }
 }
 
 function bindPlatformActions() {
@@ -1335,11 +1951,31 @@ if (themeToggle) {
 
 bindFilters();
 bindDocumentClicks();
-bindDatabaseImport();
+bindConnectors();
 bindRulesActions();
 bindPlatformActions();
-clearReviewSelection("Select a document from the worklist.");
+bindDetailTabs();
+bindDocumentTab();
+clearReviewSelection();
 
-Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]).catch((error) => {
+Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]).then(async () => {
+  // Deep-link: auto-select a document if ?doc=ID is present
+  const docParam = new URLSearchParams(window.location.search).get("doc");
+  if (docParam) {
+    try {
+      const [docResponse, auditResponse] = await Promise.all([
+        apiFetch(`/api/documents/${docParam}`),
+        apiFetch(`/api/documents/${docParam}/audit?limit=30`),
+      ]);
+      const [doc, audit] = await Promise.all([
+        parseJSON(docResponse),
+        parseJSON(auditResponse),
+      ]);
+      renderReviewDocument(doc, audit.items || []);
+    } catch {
+      // Ignore deep-link preload errors; dashboard remains usable.
+    }
+  }
+}).catch((error) => {
   uploadStatus.textContent = `Failed to load dashboard: ${error.message}`;
 });

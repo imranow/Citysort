@@ -32,280 +32,55 @@
       })();
     </script>
     <style>
-      /* Critical fallback so shell layout remains usable if stale cached CSS is served. */
+      /* Critical fallback — keeps shell usable before external CSS loads */
       :root {
-        --bg: #f3f4f6;
-        --surface: #ffffff;
-        --surface-muted: #f6f7f9;
-        --line: #d1d5db;
-        --ink: #111827;
-        --ink-soft: #4b5563;
-        --accent: #0a66d6;
-        --accent-soft: #e7f0fa;
-        --primary-btn-bg: #111827;
-        --primary-btn-text: #f9fafb;
+        --bg: #f2f4f8; --surface: #ffffff; --surface-muted: #f7f9fc;
+        --line: #d8dee8; --ink: #2d3544; --ink-soft: #657286;
+        --accent: #c3ccd9; --accent-strong: #5f6d82; --accent-soft: #edf2f8;
+        --primary-btn-bg: #d4dbe7; --primary-btn-text: #2f394c;
+        --sidebar-bg: #f5f7fa; --sidebar-ink: #667388; --sidebar-ink-strong: #2f394c;
+        --sidebar-line: #d8dee8; --sidebar-surface: #ffffff;
+        --sidebar-active-bg: #e7edf5; --sidebar-active-ink: #3e4a5f;
       }
-
       html[data-theme="dark"] {
-        --bg: #0b0f14;
-        --surface: #161b22;
-        --surface-muted: #121820;
-        --line: #2e3742;
-        --ink: #f1f5f9;
-        --ink-soft: #9ca3af;
-        --accent: #60a5fa;
-        --accent-soft: #15273c;
-        --primary-btn-bg: #f1f5f9;
-        --primary-btn-text: #0f172a;
+        --bg: #edf1f6; --surface: #fbfcfe; --surface-muted: #f3f6fa;
+        --line: #d2dae6; --ink: #2a3343; --ink-soft: #5f6d82;
+        --accent: #bcc7d6; --accent-strong: #56657c; --accent-soft: #e8eef6;
+        --primary-btn-bg: #ced7e4; --primary-btn-text: #2c3649;
+        --sidebar-bg: #f1f4f9; --sidebar-ink: #637086; --sidebar-ink-strong: #2c3649;
+        --sidebar-line: #d2dae6; --sidebar-surface: #fbfcfe;
+        --sidebar-active-bg: #e3eaf3; --sidebar-active-ink: #39465b;
       }
-
-      html,
-      body {
-        margin: 0;
-        min-height: 100%;
-        font-size: 18px;
-        background: var(--bg);
-        color: var(--ink);
-        font-family: "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
-      }
-
-      a {
-        color: inherit;
-        text-decoration: none;
-      }
-
-      .app-shell {
-        min-height: 100vh;
-        display: grid;
-        grid-template-columns: 304px 1fr;
-      }
-
-      .shell-sidebar {
-        border-right: 1px solid var(--line);
-        background: var(--surface-muted);
-        padding: 1rem;
-      }
-
-      .sidebar-link {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        color: var(--ink-soft);
-        padding: 0.5rem 0.62rem;
-        border-radius: 0.55rem;
-      }
-
-      .sidebar-service {
-        border: 1px solid var(--line);
-        border-radius: 0.75rem;
-        background: var(--surface);
-        padding: 0.68rem;
-      }
-
-      .sidebar-account {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 0.5rem;
-        align-items: center;
-        border: 1px solid var(--line);
-        border-radius: 0.75rem;
-        background: var(--surface);
-        padding: 0.65rem;
-      }
-
-      .account-avatar {
-        width: 2rem;
-        height: 2rem;
-        border-radius: 999px;
-        display: grid;
-        place-items: center;
-        border: 1px solid var(--line);
-        background: var(--accent-soft);
-        color: var(--accent);
-        font-weight: 700;
-      }
-
-      .sidebar-link.active {
-        background: var(--accent-soft);
-        color: var(--accent);
-      }
-
-      .shell-main {
-        padding: 1rem 1.15rem;
-      }
-
-      .app-toolbar {
-        display: flex;
-        gap: 0.65rem;
-        justify-content: space-between;
-        margin-bottom: 0.8rem;
-      }
-
-      .toolbar-search {
-        flex: 1;
-      }
-
-      .toolbar-actions {
-        display: flex;
-        gap: 0.5rem;
-      }
-
-      .platform-status {
-        margin: 0 0 0.8rem;
-        border: 1px solid var(--line);
-        border-radius: 0.56rem;
-        padding: 0.5rem 0.62rem;
-        background: var(--surface);
-      }
-
-      .shell-topbar {
-        border: 1px solid var(--line);
-        border-radius: 0.75rem;
-        background: var(--surface);
-        padding: 1rem 1.15rem;
-      }
-
-      .topbar-meta {
-        margin-top: 0.62rem;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-      }
-
-      .meta-chip {
-        display: inline-flex;
-        align-items: center;
-        border-radius: 0.4rem;
-        border: 1px solid var(--line);
-        background: var(--surface-muted);
-        color: var(--ink-soft);
-        font-size: 0.78rem;
-        padding: 0.24rem 0.5rem;
-      }
-
-      .meta-chip.accent {
-        border-color: var(--accent);
-        background: var(--accent-soft);
-        color: var(--accent);
-      }
-
-      .shell-tabs {
-        margin-top: 0.72rem;
-        display: flex;
-        gap: 0.16rem;
-        border-bottom: 1px solid var(--line);
-        overflow-x: auto;
-      }
-
-      .topbar-actions {
-        display: flex;
-        gap: 0.48rem;
-        justify-content: flex-end;
-      }
-
-      .tab {
-        color: var(--ink-soft);
-        padding: 0.58rem 0.78rem;
-        border-bottom: 2px solid transparent;
-        white-space: nowrap;
-      }
-
-      .tab.active {
-        color: var(--accent);
-        border-color: var(--accent);
-      }
-
-      .layout {
-        margin-top: 0.88rem;
-        display: grid;
-        grid-template-columns: repeat(12, minmax(0, 1fr));
-        gap: 0.9rem;
-      }
-
-      .panel {
-        border-radius: 0.75rem;
-        border: 1px solid var(--line);
-        background: var(--surface);
-        padding: 1rem;
-      }
-
-      .link-icon {
-        width: 0.75rem;
-        height: 0.75rem;
-        border-radius: 0.2rem;
-        border: 1px solid var(--line);
-        background: var(--surface);
-        flex: 0 0 auto;
-      }
-
-      :where(
-        .sidebar-service,
-        .sidebar-account,
-        .account-avatar,
-        .platform-status,
-        .shell-topbar,
-        .meta-chip,
-        .panel,
-        .link-icon,
-        .sidebar-link,
-        input,
-        select,
-        textarea,
-        button
-      ) {
-        border-radius: 0 !important;
-      }
-
-      .app-shell * {
-        border-radius: 0 !important;
-      }
-
-      .panel.is-page-hidden {
-        display: none;
-      }
-
-      .upload-panel {
-        grid-column: span 4;
-      }
-
-      .metrics-panel {
-        grid-column: span 8;
-      }
-
-      .db-import-panel,
-      .review-panel,
-      .rules-panel {
-        grid-column: span 12;
-      }
-
-      .queues-panel,
-      .worklist-panel {
-        grid-column: span 6;
-      }
-
-      @media (max-width: 1320px) {
-        .upload-panel,
-        .metrics-panel,
-        .queues-panel,
-        .worklist-panel {
-          grid-column: span 12;
-        }
-      }
-
-      @media (max-width: 1040px) {
-        .app-shell {
-          grid-template-columns: 1fr;
-        }
-
-        html,
-        body {
-          font-size: 16px;
-        }
-
-        .app-toolbar {
-          flex-direction: column;
-        }
-      }
+      html, body { margin:0; min-height:100%; font-size:15px; background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans","Segoe UI",-apple-system,sans-serif; }
+      a { color:inherit; text-decoration:none; }
+      .app-shell { min-height:100vh; display:grid; grid-template-columns:272px 1fr; }
+      .shell-sidebar { background:var(--sidebar-bg); padding:0.875rem 0.75rem; }
+      .sidebar-link { display:flex; align-items:center; gap:0.5rem; color:var(--sidebar-ink); padding:0.5rem 0.625rem; }
+      .sidebar-link.active { background:var(--sidebar-active-bg); color:var(--sidebar-active-ink); }
+      .sidebar-service, .sidebar-account { border:1px solid var(--sidebar-line); background:var(--sidebar-surface); padding:0.5rem; }
+      .account-avatar { width:1.875rem; height:1.875rem; display:grid; place-items:center; background:var(--sidebar-active-bg); color:var(--sidebar-active-ink); font-weight:700; }
+      .shell-main { padding:1.5rem 2rem; }
+      .app-toolbar { display:flex; gap:0.75rem; justify-content:space-between; margin-bottom:1rem; }
+      .toolbar-search { flex:1; }
+      .toolbar-actions { display:flex; gap:0.375rem; }
+      .platform-status { margin:0 0 1rem; border:1px solid var(--line); padding:0.5rem 0.75rem; background:var(--surface); }
+      .shell-topbar { border:1px solid var(--line); background:var(--surface); padding:1.25rem 1.5rem; }
+      .topbar-meta { margin-top:0.75rem; display:flex; flex-wrap:wrap; gap:0.375rem; }
+      .meta-chip { display:inline-flex; border:1px solid var(--line); background:var(--surface-muted); color:var(--ink-soft); font-size:0.75rem; padding:0.25rem 0.5rem; }
+      .meta-chip.accent { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-strong); }
+      .shell-tabs { margin-top:1rem; display:flex; border-bottom:1px solid var(--line); overflow-x:auto; }
+      .topbar-actions { display:flex; gap:0.375rem; justify-content:flex-end; }
+      .tab { color:var(--ink-soft); padding:0.6875rem 1rem; border-bottom:2px solid transparent; white-space:nowrap; }
+      .tab.active { color:var(--accent-strong); border-color:var(--accent); }
+      .layout { margin-top:1.25rem; display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:1rem; }
+      .panel { border:1px solid var(--line); background:var(--surface); padding:1.25rem; }
+      .link-icon { width:1rem; height:1rem; flex:0 0 auto; opacity:0.7; }
+      .panel.is-page-hidden { display:none; }
+      .upload-panel { grid-column:span 4; } .metrics-panel { grid-column:span 8; }
+      .connectors-panel, .document-review-panel, .rules-panel { grid-column:span 12; }
+      .queue-summary-panel, .review-summary-panel { grid-column:span 6; }
+      @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
+      @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
     <link rel="stylesheet" href="/static/styles.v2.css" />
   </head>
@@ -339,14 +114,13 @@
           <p class="sidebar-label">Monitor</p>
           <a href="/?page=overview" class="sidebar-link active" data-page="overview"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></svg><span>Overview</span></a>
           <a href="/?page=upload" class="sidebar-link" data-page="upload"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 6L8 3.5L10.5 6"/><path d="M8 3.5V10.5"/><path d="M13.5 10v2.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V10"/></svg><span>Ingestion</span></a>
-          <a href="/?page=queues" class="sidebar-link" data-page="queues"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.2" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="7" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg><span>Queues</span></a>
+          <a href="/?page=queues" class="sidebar-link" data-page="queues"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M6 6l1.5 1.5L10 5"/><path d="M6 10h4"/></svg><span>Document Review</span></a>
         </div>
 
         <div class="sidebar-group">
           <p class="sidebar-label">Manage</p>
-          <a href="/?page=review" class="sidebar-link" data-page="review"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M6 6l1.5 1.5L10 5"/><path d="M6 10h4"/></svg><span>Human Review</span></a>
           <a href="/?page=rules" class="sidebar-link" data-page="rules"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12"/><path d="M2 8h12"/><path d="M2 13h12"/><circle cx="5" cy="3" r="1.5" fill="var(--surface)" /><circle cx="11" cy="8" r="1.5" fill="var(--surface)" /><circle cx="7" cy="13" r="1.5" fill="var(--surface)" /></svg><span>Routing Rules</span></a>
-          <a href="/?page=db-import" class="sidebar-link" data-page="db-import"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2.5"/><path d="M2.5 4v8c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5V4"/><path d="M2.5 8c0 1.38 2.46 2.5 5.5 2.5s5.5-1.12 5.5-2.5"/></svg><span>Database Import</span></a>
+          <a href="/?page=connectors" class="sidebar-link" data-page="connectors"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3H3v4h3M10 3h3v4h-3M6 5h4M6 9H3v4h3M10 9h3v4h-3M6 11h4"/></svg><span>Connectors</span></a>
         </div>
 
         <div class="sidebar-group sidebar-group-muted">
@@ -413,10 +187,9 @@
         <nav class="shell-tabs">
           <a href="/?page=overview" class="tab active" data-page="overview">Overview</a>
           <a href="/?page=upload" class="tab" data-page="upload">Ingestion</a>
-          <a href="/?page=queues" class="tab" data-page="queues">Queues</a>
-          <a href="/?page=review" class="tab" data-page="review">Review</a>
+          <a href="/?page=queues" class="tab" data-page="queues">Document Review</a>
           <a href="/?page=rules" class="tab" data-page="rules">Routing Rules</a>
-          <a href="/?page=db-import" class="tab" data-page="db-import">Database Import</a>
+          <a href="/?page=connectors" class="tab" data-page="connectors">Connectors</a>
         </nav>
 
         <main class="layout">
@@ -490,234 +263,277 @@
             </div>
           </section>
 
-          <section class="panel db-import-panel" data-pages="overview db-import">
+          <section class="panel connectors-panel" data-pages="overview connectors">
             <div class="section-head">
-              <h2>Import From Database</h2>
-              <p>Simple 3-step setup</p>
+              <h2>Connectors</h2>
+              <p>Data sources</p>
             </div>
-            <p class="subtitle-small">Paste your database connection and query. We handle the rest with safe defaults.</p>
-            <form id="db-import-form">
-              <label for="db-url">1. Database URL</label>
-              <input
-                id="db-url"
-                type="text"
-                placeholder="postgresql://user:pass@host:5432/dbname"
-                required
-              />
 
-              <label for="db-query">2. SQL Query (read-only SELECT)</label>
-              <textarea id="db-query" rows="4" spellcheck="false">
-SELECT filename, content, content_type
-FROM documents_to_ingest</textarea
-              >
+            <!-- Connector Grid View (default) -->
+            <div id="connectors-grid" class="connectors-grid"></div>
 
-              <label>3. Where is the document data?</label>
-              <div class="choice-grid">
-                <label class="choice-card" for="db-source-content">
-                  <input id="db-source-content" type="radio" name="db-source-mode" value="content" checked />
-                  <span class="choice-title">Content column</span>
-                  <span class="choice-desc">Your query returns file content directly (best for most setups).</span>
-                </label>
-                <label class="choice-card" for="db-source-path">
-                  <input id="db-source-path" type="radio" name="db-source-mode" value="path" />
-                  <span class="choice-title">File path column</span>
-                  <span class="choice-desc">Your query returns file paths on this server.</span>
-                </label>
-              </div>
-              <p id="db-source-helper" class="status">Mode: Content column selected.</p>
+            <!-- Connector Config View (hidden by default) -->
+            <div id="connector-config" style="display:none;">
+              <button type="button" id="connector-back" class="connector-back secondary">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M10 3L5 8l5 5"/></svg>Back to Connectors
+              </button>
 
-              <details class="rules-advanced">
-                <summary>Advanced Mapping</summary>
-                <div class="db-import-grid">
-                  <div>
-                    <label for="db-filename-column">Filename Column</label>
-                    <input id="db-filename-column" type="text" value="filename" />
+              <div class="connector-config-header" id="connector-config-header"></div>
+
+              <form id="connector-config-form">
+                <div id="connector-config-fields"></div>
+
+                <!-- Query section (DB connectors only) -->
+                <div id="connector-query-section" style="display:none;">
+                  <label for="connector-query">SQL Query (read-only SELECT)</label>
+                  <textarea id="connector-query" rows="4" spellcheck="false">SELECT filename, content, content_type
+FROM documents_to_ingest</textarea>
+
+                  <label>Where is the document data?</label>
+                  <div class="choice-grid">
+                    <label class="choice-card" for="connector-source-content">
+                      <input id="connector-source-content" type="radio" name="connector-source-mode" value="content" checked />
+                      <span class="choice-title">Content column</span>
+                      <span class="choice-desc">Your query returns file content directly.</span>
+                    </label>
+                    <label class="choice-card" for="connector-source-path">
+                      <input id="connector-source-path" type="radio" name="connector-source-mode" value="path" />
+                      <span class="choice-title">File path column</span>
+                      <span class="choice-desc">Your query returns file paths on this server.</span>
+                    </label>
                   </div>
-                  <div>
-                    <label for="db-content-column">Content Column</label>
-                    <input id="db-content-column" type="text" value="content" />
-                  </div>
-                  <div>
-                    <label for="db-path-column">File Path Column</label>
-                    <input id="db-path-column" type="text" placeholder="file_path" />
-                  </div>
-                  <div>
-                    <label for="db-content-type-column">Content-Type Column</label>
-                    <input id="db-content-type-column" type="text" value="content_type" />
-                  </div>
-                  <div>
-                    <label for="db-limit">Row Limit</label>
-                    <input id="db-limit" type="number" min="1" max="5000" value="500" />
-                  </div>
+
+                  <details class="rules-advanced">
+                    <summary>Advanced Mapping</summary>
+                    <div class="connector-fields-grid">
+                      <div class="connector-field">
+                        <label for="connector-filename-col">Filename Column</label>
+                        <input id="connector-filename-col" type="text" value="filename" />
+                      </div>
+                      <div class="connector-field">
+                        <label for="connector-content-col">Content Column</label>
+                        <input id="connector-content-col" type="text" value="content" />
+                      </div>
+                      <div class="connector-field">
+                        <label for="connector-path-col">File Path Column</label>
+                        <input id="connector-path-col" type="text" placeholder="file_path" />
+                      </div>
+                      <div class="connector-field">
+                        <label for="connector-content-type-col">Content-Type Column</label>
+                        <input id="connector-content-type-col" type="text" value="content_type" />
+                      </div>
+                      <div class="connector-field">
+                        <label for="connector-limit">Row Limit</label>
+                        <input id="connector-limit" type="number" min="1" max="5000" value="500" />
+                      </div>
+                    </div>
+                    <label class="check-inline" for="connector-process-async">
+                      <input id="connector-process-async" type="checkbox" />
+                      Process in background (recommended for large imports)
+                    </label>
+                  </details>
                 </div>
 
-                <label class="check-inline" for="db-process-async">
-                  <input id="db-process-async" type="checkbox" />
-                  Process in background (recommended for large imports)
-                </label>
-              </details>
-
-              <div class="actions">
-                <button id="db-import-submit" type="submit">Start Import</button>
-              </div>
-            </form>
-            <p id="db-import-status" class="status"></p>
+                <div class="actions connector-actions">
+                  <button type="button" id="connector-test-btn" class="secondary">Test Connection</button>
+                  <button type="submit" id="connector-import-btn">Import Documents</button>
+                </div>
+              </form>
+              <p id="connector-status" class="status"></p>
+            </div>
           </section>
 
-          <section class="panel queues-panel" data-pages="overview queues">
+          <!-- Overview-only: Queue Summary -->
+          <section class="panel queue-summary-panel" data-pages="overview">
             <div class="section-head">
               <h2>Department Queues</h2>
-              <p>Routing distribution</p>
+              <a href="/?page=queues" class="section-link">View all →</a>
             </div>
-            <div class="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Department</th>
-                    <th>Total</th>
-                    <th>Needs Review</th>
-                    <th>Ready</th>
-                  </tr>
-                </thead>
-                <tbody id="queue-body"></tbody>
-              </table>
-            </div>
+            <div id="queue-summary-body" class="queue-chips"></div>
           </section>
 
-          <section class="panel worklist-panel" data-pages="overview queues">
+          <!-- Overview-only: Needs Review Summary -->
+          <section class="panel review-summary-panel" data-pages="overview">
             <div class="section-head">
-              <h2>Document Worklist</h2>
-              <p>Most recent 200 records</p>
+              <h2>Needs Review</h2>
+              <a href="/?page=queues" class="section-link">Review all →</a>
             </div>
-            <div class="filters">
-              <label for="filter-status">Status</label>
-              <select id="filter-status">
-                <option value="">All</option>
-                <option value="needs_review">needs_review</option>
-                <option value="routed">routed</option>
-                <option value="approved">approved</option>
-                <option value="corrected">corrected</option>
-                <option value="failed">failed</option>
-              </select>
-              <label for="filter-department">Department</label>
-              <input id="filter-department" type="text" placeholder="e.g. City Clerk" />
-              <label for="filter-search">File Search</label>
-              <input id="filter-search" type="text" placeholder="filename..." />
-            </div>
-            <div class="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>File</th>
-                    <th>Type</th>
-                    <th>Department</th>
-                    <th>Status</th>
-                    <th>Confidence</th>
-                    <th>Review</th>
-                  </tr>
-                </thead>
-                <tbody id="docs-body"></tbody>
-              </table>
-            </div>
+            <div id="review-summary-body" class="review-summary-list"></div>
           </section>
 
-          <section class="panel review-panel" id="review-panel" data-pages="overview review">
+          <!-- Unified Document Review (split-pane) -->
+          <section class="panel document-review-panel" data-pages="queues review">
             <div class="section-head">
-              <h2>Review Document</h2>
-              <p>Quick decision flow</p>
-            </div>
-            <p class="subtitle-small">Pick a document from the worklist, then approve or send it back to review.</p>
-            <div class="review-context">
-              <p id="review-selected">Select a document from the worklist.</p>
-              <div class="review-tags">
-                <span id="review-current-status">Status: -</span>
-                <span id="review-current-type">Type: -</span>
-                <span id="review-current-department">Department: -</span>
-                <span id="review-current-confidence">Confidence: -</span>
-              </div>
+              <h2>Document Review</h2>
+              <p>Queue-based review</p>
             </div>
 
-            <div class="review-columns">
-              <div>
-                <label for="review-missing">Missing Required Fields</label>
-                <pre id="review-missing" class="mono-block">-</pre>
+            <!-- Department queue chips (clickable filters) -->
+            <div id="queue-chips" class="queue-chips"></div>
+
+            <!-- Split pane -->
+            <div class="review-split">
+              <!-- LEFT: Document list -->
+              <div class="review-list-pane" id="review-list-pane">
+                <div class="review-list-toolbar">
+                  <div class="review-list-filters">
+                    <select id="filter-status">
+                      <option value="">All statuses</option>
+                      <option value="needs_review">Needs review</option>
+                      <option value="routed">Routed</option>
+                      <option value="approved">Approved</option>
+                      <option value="corrected">Corrected</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                    <input id="filter-search" type="text" placeholder="Search files…" />
+                  </div>
+                  <span class="review-list-count" id="review-list-count">0 documents</span>
+                </div>
+                <div class="review-list-scroll" id="review-list-scroll"></div>
               </div>
-              <div>
-                <label for="review-errors">Validation Errors</label>
-                <pre id="review-errors" class="mono-block">-</pre>
+
+              <!-- RIGHT: Review detail -->
+              <div class="review-detail-pane" id="review-detail-pane">
+                <!-- Empty state -->
+                <div class="review-empty-state" id="review-empty-state">
+                  <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="4" width="24" height="32" rx="3"/><path d="M15 16h10M15 22h10M15 28h6"/><path d="M20 4v6"/></svg>
+                  <p>Select a document to review</p>
+                </div>
+
+                <!-- Detail content (hidden until selection) -->
+                <div id="review-detail-content" style="display:none">
+                  <!-- Document header -->
+                  <div class="review-detail-header">
+                    <h3 id="review-filename" class="review-detail-title">-</h3>
+                    <div class="review-detail-meta">
+                      <span id="review-badge-status" class="status-badge">-</span>
+                      <span id="review-badge-type" class="pill">-</span>
+                      <span id="review-badge-dept" class="review-meta-text">-</span>
+                      <span id="review-badge-confidence" class="review-meta-text">
+                        <span class="confidence-track" style="width:60px"><span id="review-conf-bar" style="width:0%"></span></span>
+                        <span id="review-conf-pct">0%</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- Issues (hidden when empty) -->
+                  <div class="review-issues" id="review-issues" style="display:none">
+                    <p class="review-issues-title">Issues Found</p>
+                    <div class="review-issues-grid">
+                      <div id="review-missing-section">
+                        <label>Missing Fields</label>
+                        <pre id="review-missing" class="mono-block">-</pre>
+                      </div>
+                      <div id="review-errors-section">
+                        <label>Validation Errors</label>
+                        <pre id="review-errors" class="mono-block">-</pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Detail-pane tabs -->
+                  <div class="detail-tabs" id="detail-tabs">
+                    <button type="button" class="detail-tab active" data-detail-tab="review">Review</button>
+                    <button type="button" class="detail-tab" data-detail-tab="document">Document</button>
+                  </div>
+
+                  <!-- Tab panel: Review -->
+                  <div class="detail-tab-panel active" id="detail-panel-review" data-detail-panel="review">
+                    <form id="review-form">
+                      <input type="hidden" id="review-id" />
+
+                      <label for="review-doc-type">Correct type (only if wrong)</label>
+                      <select id="review-doc-type">
+                        <option value="">(No change)</option>
+                        <option value="building_permit">building_permit</option>
+                        <option value="business_license">business_license</option>
+                        <option value="foi_request">foi_request</option>
+                        <option value="zoning_variance">zoning_variance</option>
+                        <option value="complaint">complaint</option>
+                        <option value="benefits_application">benefits_application</option>
+                        <option value="court_filing">court_filing</option>
+                        <option value="other">other</option>
+                      </select>
+
+                      <label for="review-department">Correct department (optional)</label>
+                      <input id="review-department" type="text" placeholder="Leave blank to keep current" />
+
+                      <label for="review-notes">Reviewer notes (optional)</label>
+                      <textarea id="review-notes" rows="2" placeholder="Brief reason for your decision"></textarea>
+
+                      <div class="actions">
+                        <button type="submit">Approve</button>
+                        <button type="button" id="reject" class="secondary">Keep In Review</button>
+                        <button type="button" id="reprocess" class="secondary">Reprocess</button>
+                      </div>
+
+                      <details class="rules-advanced review-advanced">
+                        <summary>Advanced Details</summary>
+
+                        <label for="review-fields-json">Corrected Fields (JSON)</label>
+                        <textarea id="review-fields-json" rows="5" spellcheck="false">{}</textarea>
+
+                        <label for="review-audit">Audit Trail</label>
+                        <pre id="review-audit" class="mono-block">-</pre>
+                      </details>
+                    </form>
+                    <p id="review-status" class="status"></p>
+                  </div>
+
+                  <!-- Tab panel: Document -->
+                  <div class="detail-tab-panel" id="detail-panel-document" data-detail-panel="document">
+                    <div class="doc-tab-toolbar">
+                      <button type="button" id="doc-download-btn" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.12em;margin-right:0.3em"><path d="M8 2v8.5M4.5 7.5L8 11l3.5-3.5"/><path d="M2.5 11v2.5a1 1 0 001 1h9a1 1 0 001-1V11"/></svg>Download Original</button>
+                      <label class="doc-reupload-label secondary" for="doc-reupload-input"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.12em;margin-right:0.3em"><path d="M5.5 6L8 3.5L10.5 6"/><path d="M8 3.5V10.5"/><path d="M13.5 10v2.5a1 1 0 01-1 1h-9a1 1 0 01-1-1V10"/></svg>Re-upload</label>
+                      <input type="file" id="doc-reupload-input" class="dropzone-input" />
+                    </div>
+                    <p id="doc-reupload-status" class="status"></p>
+
+                    <div class="doc-text-section">
+                      <label>Extracted Text (OCR)</label>
+                      <pre id="doc-text-preview" class="mono-block doc-text-block">-</pre>
+                    </div>
+
+                    <div class="doc-fields-section">
+                      <div class="doc-fields-header">
+                        <label>Extracted Fields</label>
+                        <button type="button" id="doc-fields-save" class="secondary" disabled>Save Changes</button>
+                      </div>
+                      <div id="doc-fields-editor" class="doc-fields-editor"></div>
+                      <p id="doc-fields-status" class="status"></p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-
-            <form id="review-form">
-              <input type="hidden" id="review-id" />
-
-              <label for="review-doc-type">Correct type (only if wrong)</label>
-              <select id="review-doc-type">
-                <option value="">(No change)</option>
-                <option value="building_permit">building_permit</option>
-                <option value="business_license">business_license</option>
-                <option value="foi_request">foi_request</option>
-                <option value="zoning_variance">zoning_variance</option>
-                <option value="complaint">complaint</option>
-                <option value="benefits_application">benefits_application</option>
-                <option value="court_filing">court_filing</option>
-                <option value="other">other</option>
-              </select>
-
-              <label for="review-department">Correct department (optional)</label>
-              <input id="review-department" type="text" placeholder="Leave blank to keep current" />
-
-              <label for="review-notes">Reviewer notes (optional)</label>
-              <textarea id="review-notes" rows="3" placeholder="Brief reason for your decision"></textarea>
-
-              <div class="actions">
-                <button type="submit">Approve</button>
-                <button type="button" id="reject" class="secondary">Keep In Review</button>
-                <button type="button" id="reprocess" class="secondary">Reprocess</button>
-              </div>
-
-              <details class="rules-advanced review-advanced">
-                <summary>Advanced Details</summary>
-
-                <label for="review-fields-json">Corrected Fields (JSON)</label>
-                <textarea id="review-fields-json" rows="7" spellcheck="false">{}</textarea>
-
-                <label for="review-text-preview">Extracted Text Preview</label>
-                <pre id="review-text-preview" class="mono-block">-</pre>
-
-                <label for="review-audit">Audit Trail (Latest First)</label>
-                <pre id="review-audit" class="mono-block">-</pre>
-              </details>
-            </form>
-            <p id="review-status" class="status"></p>
           </section>
 
           <section class="panel rules-panel" data-pages="overview rules">
             <div class="section-head">
               <h2>Routing Rules</h2>
-              <p>Plain-language setup</p>
-            </div>
-            <p class="subtitle-small">
-              For each document type, choose the destination department and a few trigger keywords.
-            </p>
-            <p id="rules-meta" class="status">Source: -</p>
-            <div class="actions">
-              <button type="button" id="rules-add" class="secondary">Add Type</button>
-              <button type="button" id="rules-save">Save Rules</button>
-              <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
-              <button type="button" id="rules-load" class="secondary">Reload</button>
+              <div class="rules-toolbar">
+                <button type="button" id="rules-add" class="secondary"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.12em;margin-right:0.25em"><path d="M8 3v10M3 8h10"/></svg>Add Rule</button>
+                <button type="button" id="rules-save">Save Rules</button>
+              </div>
             </div>
 
             <div id="rules-builder" class="rules-builder"></div>
 
+            <div class="rules-footer">
+              <p id="rules-meta" class="status">Source: -</p>
+              <div class="rules-footer-actions">
+                <button type="button" id="rules-reset" class="secondary">Reset Defaults</button>
+                <button type="button" id="rules-load" class="secondary">Reload</button>
+              </div>
+            </div>
+
             <details class="rules-advanced">
-              <summary>Advanced Rule Options</summary>
-              <p class="subtitle-small">Use this only if you need full JSON editing.</p>
+              <summary>JSON Editor</summary>
               <div class="actions">
                 <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
               </div>
               <label for="rules-json">Rules JSON</label>
-              <textarea id="rules-json" rows="14" spellcheck="false">{}</textarea>
+              <textarea id="rules-json" rows="10" spellcheck="false">{}</textarea>
             </details>
             <p id="rules-status" class="status"></p>
           </section>
@@ -737,16 +553,16 @@ FROM documents_to_ingest</textarea
             subtitle: "Upload and process document batches while monitoring throughput and confidence in real time.",
           },
           queues: {
-            title: "Queues",
-            subtitle: "Track department queue distribution, search records, and prioritize routing operations.",
+            title: "Document Review",
+            subtitle: "Review, approve, and route documents across department queues.",
           },
-          "db-import": {
-            title: "Database Import",
-            subtitle: "Connect a source database and ingest records directly into the CitySort processing pipeline.",
+          connectors: {
+            title: "Connectors",
+            subtitle: "Connect databases and SaaS platforms to ingest documents into the CitySort pipeline.",
           },
           review: {
-            title: "Human Review",
-            subtitle: "Review low-confidence documents and apply corrections with full audit visibility.",
+            title: "Document Review",
+            subtitle: "Review, approve, and route documents across department queues.",
           },
           rules: {
             title: "Routing Rules",
@@ -754,7 +570,18 @@ FROM documents_to_ingest</textarea
           },
         };
 
-        const requestedPage = (new URLSearchParams(window.location.search).get("page") || "overview").trim().toLowerCase();
+        const searchParams = new URLSearchParams(window.location.search);
+        let requestedPage = (searchParams.get("page") || "overview").trim().toLowerCase();
+        if (requestedPage === "db-import") {
+          requestedPage = "connectors";
+          searchParams.set("page", "connectors");
+          window.history.replaceState(null, "", `/?${searchParams.toString()}`);
+        }
+        if (requestedPage === "review") {
+          requestedPage = "queues";
+          searchParams.set("page", "queues");
+          window.history.replaceState(null, "", `/?${searchParams.toString()}`);
+        }
         const activePage = Object.prototype.hasOwnProperty.call(pageConfig, requestedPage) ? requestedPage : "overview";
 
         const titleEl = document.querySelector(".shell-topbar h1");
@@ -766,8 +593,9 @@ FROM documents_to_ingest</textarea
         const breadcrumbEl = document.getElementById("breadcrumb-current");
         if (breadcrumbEl && meta) breadcrumbEl.textContent = meta.title;
 
+        const effectivePage = activePage;
         document.querySelectorAll(".sidebar-link[data-page], .tab[data-page]").forEach((link) => {
-          const isActive = link.dataset.page === activePage;
+          const isActive = link.dataset.page === effectivePage;
           link.classList.toggle("active", isActive);
           if (isActive) {
             link.setAttribute("aria-current", "page");

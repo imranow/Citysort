@@ -72,6 +72,8 @@ from .schemas import (
     ApiKeyRecord,
     AuditTrailResponse,
     ConnectivityResponse,
+    ConnectorTestRequest,
+    ConnectorTestResponse,
     DatabaseImportRequest,
     DatabaseImportResponse,
     DeploymentListResponse,
@@ -513,6 +515,74 @@ def import_documents_from_database(
     )
 
 
+_DB_CONNECTOR_TYPES = {"postgresql", "mysql", "sqlite"}
+_SAAS_CONNECTOR_TYPES = {
+    "servicenow", "confluence", "salesforce",
+    "google_cloud_storage", "amazon_s3", "jira", "sharepoint",
+}
+
+
+@app.post("/api/connectors/{connector_type}/test", response_model=ConnectorTestResponse)
+def test_connector(
+    connector_type: str,
+    payload: ConnectorTestRequest,
+    request: Request = None,
+) -> ConnectorTestResponse:
+    _enforce(request, role="operator")
+
+    if connector_type in _DB_CONNECTOR_TYPES:
+        database_url = payload.database_url
+        if not database_url:
+            return ConnectorTestResponse(
+                success=False,
+                message="Database connection URL is required.",
+                connector_type=connector_type,
+            )
+        try:
+            connection = connect_external_database(database_url)
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            connection.close()
+            return ConnectorTestResponse(
+                success=True,
+                message=f"Successfully connected to {connector_type.title()} database.",
+                connector_type=connector_type,
+                details="Connection established and test query executed.",
+            )
+        except ExternalDatabaseError as exc:
+            return ConnectorTestResponse(
+                success=False,
+                message=f"Connection failed: {exc}",
+                connector_type=connector_type,
+            )
+        except Exception as exc:
+            return ConnectorTestResponse(
+                success=False,
+                message=f"Unexpected error: {exc}",
+                connector_type=connector_type,
+            )
+
+    if connector_type in _SAAS_CONNECTOR_TYPES:
+        config = payload.config or {}
+        missing = [k for k, v in config.items() if not str(v).strip()]
+        if missing:
+            return ConnectorTestResponse(
+                success=False,
+                message=f"Missing required fields: {', '.join(missing)}",
+                connector_type=connector_type,
+            )
+        friendly_name = connector_type.replace("_", " ").title()
+        return ConnectorTestResponse(
+            success=False,
+            message=f"{friendly_name} integration is coming soon. Your configuration looks valid.",
+            connector_type=connector_type,
+            details="SaaS connector integration pending.",
+        )
+
+    raise HTTPException(status_code=400, detail=f"Unknown connector type: {connector_type}")
+
+
 @app.get("/api/documents", response_model=DocumentListResponse)
 def get_documents(
     request: Request = None,
@@ -537,6 +607,64 @@ def get_document_by_id(document_id: str, request: Request = None) -> DocumentRes
     if not record:
         raise HTTPException(status_code=404, detail="Document not found")
     return DocumentResponse(**record)
+
+
+@app.get("/api/documents/{document_id}/download")
+def download_document(document_id: str, request: Request = None):
+    _enforce(request, role="viewer")
+    record = get_document(document_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    file_path = Path(record.get("storage_path", ""))
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    if not file_path.resolve().is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(status_code=403, detail="Access denied")
+    media_type = mimetypes.guess_type(record["filename"])[0] or "application/octet-stream"
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=record["filename"],
+        headers={"Content-Disposition": f'attachment; filename="{record["filename"]}"'},
+    )
+
+
+@app.post("/api/documents/{document_id}/reupload", response_model=DocumentResponse)
+async def reupload_document(
+    document_id: str,
+    request: Request = None,
+    file: UploadFile = File(...),
+    reprocess: bool = Form(True),
+) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    contents = await file.read()
+    safe_filename = f"{document_id}_{Path(file.filename).name}"
+    new_file_path = UPLOAD_DIR / safe_filename
+    old_path = Path(document.get("storage_path", ""))
+    if old_path.exists():
+        old_path.unlink(missing_ok=True)
+    new_file_path.write_bytes(contents)
+    content_type = file.content_type or mimetypes.guess_type(file.filename)[0]
+    update_document(document_id, updates={
+        "storage_path": str(new_file_path),
+        "filename": file.filename,
+        "content_type": content_type,
+    })
+    create_audit_event(
+        document_id=document_id,
+        action="reuploaded",
+        actor=str(identity.get("actor", "dashboard_reviewer")),
+        details=f"new_file={file.filename}",
+    )
+    if reprocess:
+        process_document_by_id(document_id, actor=str(identity.get("actor", "manual_reupload")))
+    refreshed = get_document(document_id)
+    if not refreshed:
+        raise HTTPException(status_code=500, detail="Unable to reload document")
+    return DocumentResponse(**refreshed)
 
 
 @app.post("/api/documents/{document_id}/review", response_model=DocumentResponse)
