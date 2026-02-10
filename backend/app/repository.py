@@ -193,6 +193,12 @@ def get_analytics_snapshot() -> dict[str, Any]:
         "needs_review": 0,
         "routed_or_approved": 0,
         "average_confidence": 0.0,
+        "automated_documents": 0,
+        "manual_documents": 0,
+        "automation_rate": 0.0,
+        "manual_rate": 0.0,
+        "manual_unassigned": 0,
+        "missing_contact_email": 0,
         "by_type": [],
         "by_status": [],
     }
@@ -204,6 +210,7 @@ def get_analytics_snapshot() -> dict[str, Any]:
                 COUNT(*) AS total_documents,
                 SUM(CASE WHEN requires_review = 1 THEN 1 ELSE 0 END) AS needs_review,
                 SUM(CASE WHEN status IN ('routed', 'approved', 'corrected') THEN 1 ELSE 0 END) AS routed_or_approved,
+                SUM(CASE WHEN status IN ('routed', 'approved', 'corrected', 'completed', 'archived') THEN 1 ELSE 0 END) AS automated_documents,
                 AVG(COALESCE(confidence, 0)) AS average_confidence
             FROM documents
             """
@@ -215,9 +222,19 @@ def get_analytics_snapshot() -> dict[str, Any]:
                     "total_documents": totals["total_documents"] or 0,
                     "needs_review": totals["needs_review"] or 0,
                     "routed_or_approved": totals["routed_or_approved"] or 0,
+                    "automated_documents": totals["automated_documents"] or 0,
                     "average_confidence": round(float(totals["average_confidence"] or 0.0), 4),
                 }
             )
+
+        manual_unassigned_row = connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM documents
+            WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
+              AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
+            """
+        ).fetchone()
 
         by_type_rows = connection.execute(
             """
@@ -246,9 +263,34 @@ def get_analytics_snapshot() -> dict[str, Any]:
             (utcnow_iso(),),
         ).fetchone()
 
+        try:
+            missing_contact_row = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM documents
+                WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
+                  AND COALESCE(
+                    NULLIF(json_extract(extracted_fields, '$.applicant_email'), ''),
+                    NULLIF(json_extract(extracted_fields, '$.contact_email'), ''),
+                    NULLIF(json_extract(extracted_fields, '$.sender_email'), ''),
+                    NULLIF(json_extract(extracted_fields, '$.email'), '')
+                  ) IS NULL
+                """
+            ).fetchone()
+            analytics["missing_contact_email"] = int(missing_contact_row["total"]) if missing_contact_row else 0
+        except Exception:
+            analytics["missing_contact_email"] = 0
+
     analytics["by_type"] = [dict(row) for row in by_type_rows]
     analytics["by_status"] = [dict(row) for row in by_status_rows]
     analytics["overdue"] = int(overdue_row["total"]) if overdue_row else 0
+    analytics["manual_unassigned"] = int(manual_unassigned_row["total"]) if manual_unassigned_row else 0
+    total_documents = int(analytics["total_documents"] or 0)
+    automated_documents = int(analytics["automated_documents"] or 0)
+    manual_documents = max(total_documents - automated_documents, 0)
+    analytics["manual_documents"] = manual_documents
+    analytics["automation_rate"] = round((automated_documents / total_documents), 4) if total_documents else 0.0
+    analytics["manual_rate"] = round((manual_documents / total_documents), 4) if total_documents else 0.0
 
     return analytics
 
@@ -800,6 +842,37 @@ def list_assigned_to(user_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
             (user_id, limit),
         ).fetchall()
     return [_deserialize_row(row) for row in rows]
+
+
+def list_unassigned_manual_documents(*, limit: int = 200) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM documents
+            WHERE status IN ('needs_review', 'acknowledged')
+              AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
+            ORDER BY
+              CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
+              due_date ASC,
+              updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_deserialize_row(row) for row in rows]
+
+
+def count_unassigned_manual_documents() -> int:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM documents
+            WHERE status IN ('needs_review', 'acknowledged')
+              AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
+            """
+        ).fetchone()
+    return int(row["total"]) if row else 0
 
 
 def create_outbound_email(

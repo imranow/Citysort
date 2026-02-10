@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .config import CONFIDENCE_THRESHOLD, FORCE_REVIEW_DOC_TYPES, URGENCY_KEYWORDS
-from .providers import try_external_classification, try_external_ocr
+from .providers import (
+    try_anthropic_field_enrichment,
+    try_external_classification,
+    try_external_ocr,
+)
 from .rules import get_active_rules
 
 try:
@@ -192,7 +196,35 @@ def process_document(*, file_path: str, content_type: Optional[str] = None) -> d
         urgency = detect_urgency(text)
         department = route_document(doc_type, active_rules=active_rules)
 
+    rule = active_rules.get(doc_type, active_rules["other"])
+    required_fields = [str(field).strip() for field in rule.get("required_fields", []) if str(field).strip()]
     missing_fields, validation_errors = validate_document(doc_type, fields, active_rules=active_rules)
+    enrichment_meta: dict[str, Any] | None = None
+    if missing_fields:
+        enrichment_result = try_anthropic_field_enrichment(
+            text=text,
+            doc_type=doc_type,
+            required_fields=required_fields,
+            extracted_fields=fields,
+        )
+        if enrichment_result:
+            enriched_fields = enrichment_result.get("fields", {})
+            if isinstance(enriched_fields, dict):
+                newly_filled: list[str] = []
+                for key, value in enriched_fields.items():
+                    if key not in fields or not fields.get(key):
+                        fields[key] = value
+                        newly_filled.append(str(key))
+                if newly_filled:
+                    missing_fields, validation_errors = validate_document(
+                        doc_type, fields, active_rules=active_rules
+                    )
+                    enrichment_meta = {
+                        "provider": enrichment_result.get("provider", "anthropic"),
+                        "confidence": enrichment_result.get("confidence", 0.0),
+                        "filled_fields": sorted(newly_filled),
+                        "notes": enrichment_result.get("notes"),
+                    }
 
     validation_penalty = min(len(validation_errors) * 0.08, 0.35)
     effective_confidence = max(min(classification_confidence, extraction_confidence) - validation_penalty, 0.0)
@@ -215,5 +247,6 @@ def process_document(*, file_path: str, content_type: Optional[str] = None) -> d
             "extraction_method": extraction_method,
             "extraction_confidence": extraction_confidence,
             "classification_meta": classification_meta,
+            "field_enrichment": enrichment_meta,
         },
     }

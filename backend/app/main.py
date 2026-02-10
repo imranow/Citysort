@@ -22,6 +22,7 @@ from .auth import (
     set_user_role,
 )
 from .config import (
+    ANTHROPIC_API_KEY,
     DEPLOY_PROVIDER,
     CLASSIFIER_PROVIDER,
     CONFIDENCE_THRESHOLD,
@@ -46,6 +47,7 @@ from .pipeline import route_document
 from .repository import (
     count_api_keys,
     count_invitations,
+    count_unassigned_manual_documents,
     create_api_key,
     create_audit_event,
     create_deployment,
@@ -61,6 +63,7 @@ from .repository import (
     list_deployments,
     list_documents,
     list_invitations,
+    list_unassigned_manual_documents,
     list_overdue_documents,
     revoke_api_key,
     update_outbound_email,
@@ -86,6 +89,10 @@ from .templates import (
 from .watcher import start_watcher, stop_watcher
 from .schemas import (
     AnalyticsResponse,
+    AutomationAnthropicSweepRequest,
+    AutomationAnthropicSweepResponse,
+    AutomationAutoAssignRequest,
+    AutomationAutoAssignResponse,
     AssignRequest,
     AuthBootstrapRequest,
     AuthLoginRequest,
@@ -1075,6 +1082,121 @@ def assign_document(
         document_id=document_id,
     )
     return DocumentResponse(**updated)
+
+
+# =====================================================================
+# Automation Assistant
+# =====================================================================
+
+@app.post("/api/automation/auto-assign", response_model=AutomationAutoAssignResponse)
+def auto_assign_manual_documents(
+    payload: AutomationAutoAssignRequest,
+    request: Request = None,
+) -> AutomationAutoAssignResponse:
+    identity = _enforce(request, role="operator")
+    user = identity.get("user")
+    requested_user = _coerce_optional_text(payload.user_id)
+    identity_user_id = user.get("id") if isinstance(user, dict) else None
+    assignee = requested_user or _coerce_optional_text(identity_user_id) or "triage_queue"
+    actor = str(identity.get("actor", payload.actor))
+
+    assigned_count = 0
+    processed_document_ids: list[str] = []
+    for document in list_unassigned_manual_documents(limit=payload.limit):
+        document_id = str(document.get("id", "")).strip()
+        if not document_id:
+            continue
+        updates: dict[str, object] = {"assigned_to": assignee}
+        if document.get("status") in ("needs_review", "acknowledged"):
+            updates["status"] = "assigned"
+        updated = update_document(document_id, updates=updates)
+        if not updated:
+            continue
+        assigned_count += 1
+        processed_document_ids.append(document_id)
+        create_audit_event(
+            document_id=document_id,
+            action="auto_assigned",
+            actor=actor,
+            details=f"assigned_to={assignee}",
+        )
+        create_notification(
+            type="assignment",
+            title=f"Document assigned: {document.get('filename', 'document')}",
+            message="Auto-assigned by Automation Assistant.",
+            user_id=assignee,
+            document_id=document_id,
+        )
+
+    remaining_unassigned = count_unassigned_manual_documents()
+    return AutomationAutoAssignResponse(
+        assignee=assignee,
+        assigned_count=assigned_count,
+        remaining_unassigned=remaining_unassigned,
+        processed_document_ids=processed_document_ids,
+    )
+
+
+@app.post(
+    "/api/automation/anthropic-sweep",
+    response_model=AutomationAnthropicSweepResponse,
+)
+def run_anthropic_automation_sweep(
+    payload: AutomationAnthropicSweepRequest,
+    request: Request = None,
+) -> AutomationAnthropicSweepResponse:
+    _enforce(request, role="operator")
+    if CLASSIFIER_PROVIDER != "anthropic":
+        raise HTTPException(
+            status_code=400,
+            detail="Anthropic sweep requires CITYSORT_CLASSIFIER_PROVIDER=anthropic.",
+        )
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not configured.",
+        )
+
+    candidates: list[dict[str, object]] = []
+    sweep_statuses = ["needs_review", "assigned", "acknowledged"]
+    if payload.include_failed:
+        sweep_statuses.append("failed")
+    for status in sweep_statuses:
+        remaining = max(payload.limit - len(candidates), 0)
+        if remaining <= 0:
+            break
+        candidates.extend(list_documents(status=status, limit=remaining))
+
+    seen_ids: set[str] = set()
+    unique_ids: list[str] = []
+    for item in candidates:
+        doc_id = str(item.get("id", "")).strip()
+        if not doc_id or doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
+        unique_ids.append(doc_id)
+
+    processed_count = 0
+    auto_cleared_count = 0
+    still_manual_count = 0
+    processed_document_ids: list[str] = []
+    for doc_id in unique_ids:
+        process_document_by_id(doc_id, actor=payload.actor)
+        refreshed = get_document(doc_id)
+        processed_count += 1
+        processed_document_ids.append(doc_id)
+        status = str((refreshed or {}).get("status", "")).strip().lower()
+        if status == "routed":
+            auto_cleared_count += 1
+        else:
+            still_manual_count += 1
+
+    return AutomationAnthropicSweepResponse(
+        processed_count=processed_count,
+        auto_cleared_count=auto_cleared_count,
+        still_manual_count=still_manual_count,
+        processed_document_ids=processed_document_ids,
+    )
 
 
 # =====================================================================

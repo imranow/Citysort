@@ -23,6 +23,7 @@ from .config import (
 from .rules import get_active_rules
 
 REQUEST_TIMEOUT_SECONDS = 60
+AI_PLACEHOLDER_VALUES = {"", "n/a", "na", "none", "null", "unknown", "not provided", "missing"}
 
 
 def _json_request(
@@ -140,6 +141,55 @@ def _classification_prompt(
         f"Extracted fields (best-effort OCR): {json.dumps(extracted_fields)}\n\n"
         f"Document text:\n{text[:12000]}"
     )
+
+
+def _field_enrichment_prompt(
+    *,
+    text: str,
+    doc_type: str,
+    required_fields: list[str],
+    extracted_fields: dict[str, Any],
+) -> str:
+    field_list = ", ".join(required_fields)
+    return (
+        "Extract missing fields from this local-government intake document. "
+        "Return strict JSON only with shape: "
+        '{"fields": {"field_name": "value"}, "confidence": 0.0-0.99, "notes": "short reason"}.\n'
+        f"Document type: {doc_type}\n"
+        f"Target fields: {field_list}\n"
+        f"Existing extracted fields: {json.dumps(extracted_fields)}\n"
+        "Rules:\n"
+        "- Use only values explicitly present in the provided text.\n"
+        "- If a value is not present, omit it from fields.\n"
+        "- Do not invent names, addresses, dates, or IDs.\n"
+        "- Keep values concise and literal.\n\n"
+        f"Document text:\n{text[:12000]}"
+    )
+
+
+def _normalize_enriched_fields(
+    payload: dict[str, Any],
+    *,
+    allowed_fields: set[str],
+) -> dict[str, Any]:
+    raw_fields = payload.get("fields", payload)
+    if not isinstance(raw_fields, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    for key, value in raw_fields.items():
+        field_name = str(key).strip()
+        if not field_name or field_name not in allowed_fields:
+            continue
+        text_value = str(value).strip()
+        if text_value.lower() in AI_PLACEHOLDER_VALUES:
+            continue
+        if len(text_value) > 240:
+            text_value = text_value[:240].strip()
+        if not text_value:
+            continue
+        normalized[field_name] = text_value
+    return normalized
 
 
 def _guess_mime(file_path: str, content_type: Optional[str]) -> str:
@@ -334,6 +384,85 @@ def _classify_with_anthropic(
     normalized = _normalize_classifier_payload(parsed, active_rules)
     normalized["provider"] = "anthropic"
     return normalized
+
+
+def try_anthropic_field_enrichment(
+    *,
+    text: str,
+    doc_type: str,
+    required_fields: list[str],
+    extracted_fields: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    if not ANTHROPIC_API_KEY:
+        return None
+    if not text.strip():
+        return None
+    target_fields = [str(field).strip() for field in required_fields if str(field).strip()]
+    if not target_fields:
+        return None
+
+    prompt = _field_enrichment_prompt(
+        text=text,
+        doc_type=doc_type,
+        required_fields=target_fields,
+        extracted_fields=extracted_fields,
+    )
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 900,
+        "temperature": 0,
+        "system": "You extract explicit fields from documents and return strict JSON only.",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    try:
+        _, _, response_body = _json_request(
+            url="https://api.anthropic.com/v1/messages",
+            method="POST",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            payload=payload,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        return None
+
+    content_blocks = response_body.get("content", [])
+    text_blocks = [
+        block.get("text")
+        for block in content_blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    if not text_blocks:
+        return None
+
+    parsed = _extract_json_payload("\n".join(text_blocks))
+    if not parsed:
+        return None
+
+    allowed_fields = set(target_fields)
+    # Allow email aliases when the model returns one variant.
+    allowed_fields.update({"email", "applicant_email", "contact_email", "sender_email"})
+    normalized_fields = _normalize_enriched_fields(parsed, allowed_fields=allowed_fields)
+    if not normalized_fields:
+        return None
+
+    confidence_raw = parsed.get("confidence", 0.0)
+    try:
+        confidence = float(confidence_raw)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(confidence, 0.99))
+
+    notes = parsed.get("notes")
+    return {
+        "provider": "anthropic",
+        "fields": normalized_fields,
+        "confidence": round(confidence, 4),
+        "notes": str(notes).strip() if notes is not None else None,
+    }
 
 
 def try_external_classification(

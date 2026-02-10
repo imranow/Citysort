@@ -907,7 +907,7 @@ h1 {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
@@ -1007,6 +1007,56 @@ h1 {
 
 .metric-bar--warning .metric-bar-fill {
   background: var(--warning-ink);
+}
+
+.automation-assistant {
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  padding: 0.625rem 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.automation-assistant-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.automation-assistant-summary strong {
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.automation-assistant-summary span {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.automation-assistant-breakdown {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.automation-assistant-breakdown .pill {
+  font-size: 0.6875rem;
+}
+
+.automation-assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.automation-assistant-actions .status {
+  margin: 0;
+  font-size: 0.75rem;
 }
 
 /* ── Forms ────────────────────────────────────────── */

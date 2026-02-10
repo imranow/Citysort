@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210b" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210d" />
   </head>
   <body>
     <div class="app-shell">
@@ -277,6 +277,16 @@
                 <strong id="metric-routed" class="metric-value">0</strong>
                 <div class="metric-bar metric-bar--success"><span class="metric-bar-fill" id="metric-routed-bar"></span></div>
               </article>
+              <article class="metric-card metric-card--success">
+                <div class="metric-header">
+                  <span>Automation Rate</span>
+                  <span class="metric-trend" id="metric-automation-trend" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8l4-4 4 4"/></svg>
+                  </span>
+                </div>
+                <strong id="metric-automation" class="metric-value">0%</strong>
+                <div class="metric-bar metric-bar--success"><span class="metric-bar-fill" id="metric-automation-bar"></span></div>
+              </article>
               <article class="metric-card">
                 <div class="metric-header">
                   <span>Average Confidence</span>
@@ -394,6 +404,23 @@ FROM documents_to_ingest</textarea>
             <div class="section-head">
               <h2>Document Review</h2>
               <p>Queue-based review</p>
+            </div>
+
+            <div id="automation-assistant" class="automation-assistant">
+              <div class="automation-assistant-summary">
+                <strong id="automation-inline-rate">Automation: 0%</strong>
+                <span id="automation-inline-gap">Manual workload: 0 docs</span>
+              </div>
+              <div class="automation-assistant-breakdown">
+                <span id="automation-inline-needs-review" class="pill">Needs Review: 0</span>
+                <span id="automation-inline-unassigned" class="pill">Unassigned: 0</span>
+                <span id="automation-inline-missing-contact" class="pill">Missing Contact: 0</span>
+              </div>
+              <div class="automation-assistant-actions">
+                <button type="button" id="automation-auto-assign" class="secondary">Auto-Assign Unassigned</button>
+                <button type="button" id="automation-anthropic-sweep" class="secondary">Anthropic Auto-Fill Queue</button>
+                <span id="automation-assistant-status" class="status"></span>
+              </div>
             </div>
 
             <!-- Department queue chips (clickable filters) -->
@@ -693,6 +720,6 @@ FROM documents_to_ingest</textarea>
       </div>
     </div>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js?v=20260210b"></script>
+    <script src="/static/app.v2.js?v=20260210d"></script>
   </body>
 </html>

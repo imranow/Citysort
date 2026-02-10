@@ -51,6 +51,14 @@ const reviewBadgeDept = document.getElementById("review-badge-dept");
 const reviewConfBar = document.getElementById("review-conf-bar");
 const reviewConfPct = document.getElementById("review-conf-pct");
 const reviewDueDate = document.getElementById("review-due-date");
+const automationInlineRate = document.getElementById("automation-inline-rate");
+const automationInlineGap = document.getElementById("automation-inline-gap");
+const automationInlineNeedsReview = document.getElementById("automation-inline-needs-review");
+const automationInlineUnassigned = document.getElementById("automation-inline-unassigned");
+const automationInlineMissingContact = document.getElementById("automation-inline-missing-contact");
+const automationAutoAssignBtn = document.getElementById("automation-auto-assign");
+const automationAnthropicSweepBtn = document.getElementById("automation-anthropic-sweep");
+const automationAssistantStatus = document.getElementById("automation-assistant-status");
 const reviewMissing = document.getElementById("review-missing");
 const reviewErrors = document.getElementById("review-errors");
 const reviewMissingSection = document.getElementById("review-missing-section");
@@ -843,6 +851,87 @@ async function runBulkAction(action, params = {}) {
   );
 }
 
+async function runAutomationAutoAssign() {
+  if (automationAutoAssignBtn) automationAutoAssignBtn.disabled = true;
+  if (automationAssistantStatus) {
+    automationAssistantStatus.classList.remove("flag-error");
+    automationAssistantStatus.textContent = "Auto-assigning unassigned review documents...";
+  }
+  try {
+    const payload = {
+      actor: "dashboard_reviewer",
+      limit: 300,
+    };
+    if (currentUserId) {
+      payload.user_id = currentUserId;
+    }
+    const data = await parseJSON(
+      await apiFetch("/api/automation/auto-assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+    const label = userNameById(data.assignee || currentUserId || "triage_queue");
+    if (automationAssistantStatus) {
+      automationAssistantStatus.classList.remove("flag-error");
+      automationAssistantStatus.textContent = `Assigned ${data.assigned_count} doc${data.assigned_count === 1 ? "" : "s"} to ${label}. Remaining unassigned: ${data.remaining_unassigned}.`;
+    }
+    showToast(`Automation Assistant assigned ${data.assigned_count} documents.`, "success");
+    await loadAll();
+  } catch (error) {
+    if (automationAssistantStatus) {
+      automationAssistantStatus.classList.add("flag-error");
+      automationAssistantStatus.textContent = `Automation failed: ${error.message}`;
+    }
+    showToast(`Automation failed: ${error.message}`, "error");
+  } finally {
+    if (automationAutoAssignBtn) automationAutoAssignBtn.disabled = false;
+  }
+}
+
+async function runAnthropicAutomationSweep() {
+  if (!window.confirm("Run Anthropic auto-fill on manual queue items now? This may use API credits.")) {
+    return;
+  }
+  if (automationAnthropicSweepBtn) automationAnthropicSweepBtn.disabled = true;
+  if (automationAssistantStatus) {
+    automationAssistantStatus.classList.remove("flag-error");
+    automationAssistantStatus.textContent = "Running Anthropic auto-fill sweep...";
+  }
+  try {
+    const data = await parseJSON(
+      await apiFetch("/api/automation/anthropic-sweep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          limit: 200,
+          include_failed: true,
+          actor: "anthropic_automation",
+        }),
+      }),
+    );
+    if (automationAssistantStatus) {
+      automationAssistantStatus.classList.remove("flag-error");
+      automationAssistantStatus.textContent =
+        `Anthropic sweep processed ${data.processed_count} docs, auto-cleared ${data.auto_cleared_count}, still manual ${data.still_manual_count}.`;
+    }
+    showToast(
+      `Anthropic sweep: ${data.auto_cleared_count}/${data.processed_count} auto-cleared`,
+      data.auto_cleared_count > 0 ? "success" : "info",
+    );
+    await loadAll();
+  } catch (error) {
+    if (automationAssistantStatus) {
+      automationAssistantStatus.classList.add("flag-error");
+      automationAssistantStatus.textContent = `Anthropic sweep failed: ${error.message}`;
+    }
+    showToast(`Anthropic sweep failed: ${error.message}`, "error");
+  } finally {
+    if (automationAnthropicSweepBtn) automationAnthropicSweepBtn.disabled = false;
+  }
+}
+
 function exportSelectedDocumentsCsv() {
   const selectedIds = selectedBulkIds();
   const selectedDocs = documentsCache.filter((doc) => selectedIds.includes(doc.id));
@@ -1145,7 +1234,30 @@ function connectivitySummary(data) {
   return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}, Deploy: ${deploy}`;
 }
 
-var prevMetrics = { total: null, review: null, overdue: null, routed: null, confidence: null };
+function renderAutomationAssistant(data) {
+  const automationRate = Number(data.automation_rate || 0);
+  const manualDocs = Number(data.manual_documents || 0);
+  const reviewDocs = Number(data.needs_review || 0);
+  const unassignedDocs = Number(data.manual_unassigned || 0);
+  const missingContact = Number(data.missing_contact_email || 0);
+  if (automationInlineRate) {
+    automationInlineRate.textContent = `Automation: ${percent(automationRate)}`;
+  }
+  if (automationInlineGap) {
+    automationInlineGap.textContent = `Manual workload: ${manualDocs} doc${manualDocs === 1 ? "" : "s"}`;
+  }
+  if (automationInlineNeedsReview) {
+    automationInlineNeedsReview.textContent = `Needs Review: ${reviewDocs}`;
+  }
+  if (automationInlineUnassigned) {
+    automationInlineUnassigned.textContent = `Unassigned: ${unassignedDocs}`;
+  }
+  if (automationInlineMissingContact) {
+    automationInlineMissingContact.textContent = `Missing Contact: ${missingContact}`;
+  }
+}
+
+var prevMetrics = { total: null, review: null, overdue: null, routed: null, automation: null, confidence: null };
 
 function updateMetric(id, newVal, prevVal, barId, barPct, trendId) {
   var el = document.getElementById(id);
@@ -1170,25 +1282,30 @@ async function loadAnalytics() {
   var review = data.needs_review || 0;
   var overdue = data.overdue || 0;
   var routed = data.routed_or_approved || 0;
+  var automation = Number(data.automation_rate || 0);
   var conf = data.average_confidence || 0;
 
   setText("metric-total", String(total));
   setText("metric-review", String(review));
   setText("metric-overdue", String(overdue));
   setText("metric-routed", String(routed));
+  setText("metric-automation", percent(automation));
   setText("metric-confidence", percent(conf));
+  renderAutomationAssistant(data);
 
   var maxDoc = Math.max(total, 1);
   updateMetric("metric-total", total, prevMetrics.total, "metric-total-bar", 100, "metric-total-trend");
   updateMetric("metric-review", review, prevMetrics.review, "metric-review-bar", (review / maxDoc) * 100, "metric-review-trend");
   updateMetric("metric-overdue", overdue, prevMetrics.overdue, "metric-overdue-bar", (overdue / maxDoc) * 100, "metric-overdue-trend");
   updateMetric("metric-routed", routed, prevMetrics.routed, "metric-routed-bar", (routed / maxDoc) * 100, "metric-routed-trend");
+  updateMetric("metric-automation", Math.round(automation * 100), prevMetrics.automation, "metric-automation-bar", automation * 100, "metric-automation-trend");
   updateMetric("metric-confidence", Math.round(conf * 100), prevMetrics.confidence, "metric-confidence-bar", conf * 100, "metric-confidence-trend");
 
   prevMetrics.total = total;
   prevMetrics.review = review;
   prevMetrics.overdue = overdue;
   prevMetrics.routed = routed;
+  prevMetrics.automation = Math.round(automation * 100);
   prevMetrics.confidence = Math.round(conf * 100);
 }
 
@@ -1458,7 +1575,7 @@ function addNewRuleType() {
 }
 
 function showMetricsSkeleton() {
-  ["metric-total", "metric-review", "metric-overdue", "metric-routed", "metric-confidence"].forEach(function (id) {
+  ["metric-total", "metric-review", "metric-overdue", "metric-routed", "metric-automation", "metric-confidence"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.innerHTML = '<span class="skeleton skeleton-number"></span>';
   });
@@ -2185,6 +2302,17 @@ function bindAdvancedActions() {
         reviewStatus.textContent = `Assignment failed: ${error.message}`;
         showToast(`Assignment failed: ${error.message}`, "error");
       }
+    });
+  }
+
+  if (automationAutoAssignBtn) {
+    automationAutoAssignBtn.addEventListener("click", async () => {
+      await runAutomationAutoAssign();
+    });
+  }
+  if (automationAnthropicSweepBtn) {
+    automationAnthropicSweepBtn.addEventListener("click", async () => {
+      await runAnthropicAutomationSweep();
     });
   }
 

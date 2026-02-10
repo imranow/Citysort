@@ -55,6 +55,12 @@ class AnalyticsResponse(BaseModel):
     routed_or_approved: int
     average_confidence: float
     overdue: int = 0
+    automated_documents: int = 0
+    manual_documents: int = 0
+    automation_rate: float = 0.0
+    manual_rate: float = 0.0
+    manual_unassigned: int = 0
+    missing_contact_email: int = 0
     by_type: list[MetricBucket] = Field(default_factory=list)
     by_status: list[MetricBucket] = Field(default_factory=list)
 
@@ -398,6 +404,32 @@ class ResponseEmailSendResponse(BaseModel):
     error: Optional[str] = None
     sent_at: Optional[str] = None
     created_at: str
+
+
+class AutomationAutoAssignRequest(BaseModel):
+    user_id: Optional[str] = None
+    actor: str = "automation_assistant"
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class AutomationAutoAssignResponse(BaseModel):
+    assignee: str
+    assigned_count: int
+    remaining_unassigned: int
+    processed_document_ids: list[str] = Field(default_factory=list)
+
+
+class AutomationAnthropicSweepRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=500)
+    include_failed: bool = True
+    actor: str = "anthropic_automation"
+
+
+class AutomationAnthropicSweepResponse(BaseModel):
+    processed_count: int
+    auto_cleared_count: int
+    still_manual_count: int
+    processed_document_ids: list[str] = Field(default_factory=list)
 
 
 # --- Bulk Operations ---
