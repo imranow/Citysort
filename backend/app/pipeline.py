@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import re
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
 from .config import CONFIDENCE_THRESHOLD, FORCE_REVIEW_DOC_TYPES, URGENCY_KEYWORDS
 from .providers import (
+    try_anthropic_classification,
     try_anthropic_field_enrichment,
     try_external_classification,
     try_external_ocr,
@@ -22,7 +25,7 @@ FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
     "applicant_name": re.compile(r"(?:applicant|name|owner)\s*[:\-]\s*([A-Za-z][A-Za-z ,.'-]{2,80})", re.IGNORECASE),
     "address": re.compile(r"(?:address|property address)\s*[:\-]\s*([0-9A-Za-z .,'#-]{5,120})", re.IGNORECASE),
     "date": re.compile(
-        r"(?:date|submitted|filed)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
+        r"(?:date|submitted|filed)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|[0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})",
         re.IGNORECASE,
     ),
     "parcel_number": re.compile(r"(?:parcel(?:\s*(?:id|number|no))?)\s*[:\-]\s*([A-Za-z0-9-]{4,30})", re.IGNORECASE),
@@ -52,6 +55,29 @@ def _read_pdf_file(file_path: Path) -> str:
         return ""
 
 
+def _read_docx_file(file_path: Path) -> str:
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            xml_bytes = archive.read("word/document.xml")
+    except Exception:
+        return ""
+
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return ""
+
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paragraphs: list[str] = []
+    for paragraph in root.findall(".//w:p", namespace):
+        chunks = [node.text for node in paragraph.findall(".//w:t", namespace) if node.text]
+        line = " ".join(part.strip() for part in chunks if part.strip())
+        if line:
+            paragraphs.append(line)
+
+    return "\n".join(paragraphs)
+
+
 def extract_text(file_path: str, content_type: Optional[str] = None) -> tuple[str, str, float]:
     external_result = try_external_ocr(file_path=file_path, content_type=content_type)
     if external_result:
@@ -67,6 +93,10 @@ def extract_text(file_path: str, content_type: Optional[str] = None) -> tuple[st
     if extension == ".pdf":
         text = _read_pdf_file(path)
         return text, "pypdf" if text else "pdf_unavailable", 0.87 if text else 0.25
+
+    if extension in {".docx", ".docm"}:
+        text = _read_docx_file(path)
+        return text, "docx_xml" if text else "docx_unavailable", 0.9 if text else 0.2
 
     if extension in {".json"}:
         text = _read_text_file(path)
@@ -174,13 +204,22 @@ def route_document(doc_type: str, active_rules: Optional[dict[str, dict[str, Any
     return rule.get("department", "General Intake")
 
 
-def process_document(*, file_path: str, content_type: Optional[str] = None) -> dict[str, Any]:
+def process_document(
+    *,
+    file_path: str,
+    content_type: Optional[str] = None,
+    force_anthropic_classification: bool = False,
+) -> dict[str, Any]:
     active_rules = get_active_rules()[0]
 
     text, extraction_method, extraction_confidence = extract_text(file_path=file_path, content_type=content_type)
     fields = extract_fields(text)
 
-    external_classification = try_external_classification(text, fields, active_rules=active_rules)
+    external_classification = None
+    if force_anthropic_classification:
+        external_classification = try_anthropic_classification(text, fields, active_rules=active_rules)
+    if not external_classification:
+        external_classification = try_external_classification(text, fields, active_rules=active_rules)
     if external_classification:
         doc_type = external_classification["doc_type"]
         urgency = external_classification["urgency"]

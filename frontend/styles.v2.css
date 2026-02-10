@@ -1697,8 +1697,9 @@ button:disabled {
 .review-detail-pane {
   padding: 1.5rem;
   min-height: 0;
-  height: auto;
-  overflow: visible;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--surface);
 }
 
@@ -2552,6 +2553,11 @@ tbody tr.is-selected {
     max-height: 300px;
     border-right: none;
     border-bottom: 1px solid var(--line);
+  }
+
+  .review-detail-pane {
+    max-height: none;
+    overflow: visible;
   }
 
   .review-issues-grid {

@@ -1146,11 +1146,6 @@ def run_anthropic_automation_sweep(
     request: Request = None,
 ) -> AutomationAnthropicSweepResponse:
     _enforce(request, role="operator")
-    if CLASSIFIER_PROVIDER != "anthropic":
-        raise HTTPException(
-            status_code=400,
-            detail="Anthropic sweep requires CITYSORT_CLASSIFIER_PROVIDER=anthropic.",
-        )
     if not ANTHROPIC_API_KEY:
         raise HTTPException(
             status_code=503,
@@ -1181,7 +1176,11 @@ def run_anthropic_automation_sweep(
     still_manual_count = 0
     processed_document_ids: list[str] = []
     for doc_id in unique_ids:
-        process_document_by_id(doc_id, actor=payload.actor)
+        process_document_by_id(
+            doc_id,
+            actor=payload.actor,
+            force_anthropic_classification=True,
+        )
         refreshed = get_document(doc_id)
         processed_count += 1
         processed_document_ids.append(doc_id)

@@ -465,6 +465,15 @@ def try_anthropic_field_enrichment(
     }
 
 
+def try_anthropic_classification(
+    text: str,
+    extracted_fields: dict[str, Any],
+    active_rules: Optional[dict[str, dict[str, Any]]] = None,
+) -> Optional[dict[str, Any]]:
+    rules = active_rules or get_active_rules()[0]
+    return _classify_with_anthropic(text, extracted_fields, rules)
+
+
 def try_external_classification(
     text: str, extracted_fields: dict[str, Any], active_rules: Optional[dict[str, dict[str, Any]]] = None
 ) -> Optional[dict[str, Any]]:

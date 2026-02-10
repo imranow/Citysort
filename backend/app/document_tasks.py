@@ -10,13 +10,21 @@ from .repository import create_audit_event, get_document, update_document
 from .rules import get_active_rules
 
 
-def process_document_by_id(document_id: str, actor: str = "system") -> None:
+def process_document_by_id(
+    document_id: str,
+    actor: str = "system",
+    force_anthropic_classification: bool = False,
+) -> None:
     document = get_document(document_id)
     if not document:
         return
 
     try:
-        result = process_document(file_path=document["storage_path"], content_type=document.get("content_type"))
+        result = process_document(
+            file_path=document["storage_path"],
+            content_type=document.get("content_type"),
+            force_anthropic_classification=force_anthropic_classification,
+        )
         final_status = "needs_review" if result["requires_review"] else "routed"
 
         # Compute SLA due_date from the matched rule.
