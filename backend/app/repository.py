@@ -281,6 +281,17 @@ def get_analytics_snapshot() -> dict[str, Any]:
         except Exception:
             analytics["missing_contact_email"] = 0
 
+    # Emails sent today.
+    try:
+        today_start = utcnow_iso()[:10] + "T00:00:00"
+        emails_today_row = connection.execute(
+            "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
+            (today_start,),
+        ).fetchone()
+        analytics["emails_sent_today"] = int(emails_today_row["total"]) if emails_today_row else 0
+    except Exception:
+        analytics["emails_sent_today"] = 0
+
     analytics["by_type"] = [dict(row) for row in by_type_rows]
     analytics["by_status"] = [dict(row) for row in by_status_rows]
     analytics["overdue"] = int(overdue_row["total"]) if overdue_row else 0

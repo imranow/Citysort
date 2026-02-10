@@ -130,6 +130,7 @@ let bulkMode = false;
 const bulkSelected = new Set();
 let templateCache = [];
 let notificationsPollHandle = null;
+let classifierInfo = { classifier_provider: "rules" };
 
 const TRANSITIONS = {
   ingested: ["needs_review", "routed"],
@@ -922,11 +923,16 @@ async function runAnthropicAutomationSweep() {
     );
     await loadAll();
   } catch (error) {
+    const rawMessage = String(error.message || "Request failed");
+    const message =
+      rawMessage.toLowerCase() === "not found"
+        ? "Anthropic sweep endpoint is missing on this backend. Restart localhost server to load latest API."
+        : `Anthropic sweep failed: ${rawMessage}`;
     if (automationAssistantStatus) {
       automationAssistantStatus.classList.add("flag-error");
-      automationAssistantStatus.textContent = `Anthropic sweep failed: ${error.message}`;
+      automationAssistantStatus.textContent = message;
     }
-    showToast(`Anthropic sweep failed: ${error.message}`, "error");
+    showToast(message, "error");
   } finally {
     if (automationAnthropicSweepBtn) automationAnthropicSweepBtn.disabled = false;
   }
@@ -1157,6 +1163,33 @@ function renderReviewDocument(doc, auditItems) {
     reviewDueDate.textContent = doc.due_date ? `Due: ${safeDate(doc.due_date)}` : "Due: -";
     reviewDueDate.classList.toggle("overdue", overdue);
   }
+
+  // Urgency badge
+  var urgencyBadgeEl = document.getElementById("review-urgency-badge");
+  if (urgencyBadgeEl) {
+    if (doc.urgency === "high") {
+      urgencyBadgeEl.textContent = "HIGH PRIORITY";
+      urgencyBadgeEl.className = "urgency-badge urgency-high";
+      urgencyBadgeEl.hidden = false;
+    } else {
+      urgencyBadgeEl.hidden = true;
+    }
+  }
+
+  // AI classifier rationale badge
+  var classifierBadgeEl = document.getElementById("review-classifier-badge");
+  if (classifierBadgeEl) {
+    var provider = classifierInfo.classifier_provider || "rules";
+    if (provider === "anthropic" || provider === "openai") {
+      classifierBadgeEl.textContent = "Classified by AI (" + provider + ")";
+      classifierBadgeEl.className = "classifier-badge classifier-ai";
+    } else {
+      classifierBadgeEl.textContent = "Classified by rules";
+      classifierBadgeEl.className = "classifier-badge";
+    }
+    classifierBadgeEl.hidden = false;
+  }
+
   renderTransitionButtons(doc);
 
   // Progressive disclosure: issues
@@ -1234,9 +1267,25 @@ function connectivitySummary(data) {
   return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}, Deploy: ${deploy}`;
 }
 
+function deriveAutomationStats(data) {
+  const total = Number(data?.total_documents || 0);
+  const routedOrApproved = Number(data?.routed_or_approved || 0);
+
+  let automationRate = Number(data?.automation_rate);
+  if (!Number.isFinite(automationRate) || automationRate < 0 || automationRate > 1) {
+    automationRate = total > 0 ? Math.min(1, Math.max(0, routedOrApproved / total)) : 0;
+  }
+
+  let manualDocs = Number(data?.manual_documents);
+  if (!Number.isFinite(manualDocs) || manualDocs < 0) {
+    manualDocs = Math.max(total - routedOrApproved, 0);
+  }
+
+  return { automationRate, manualDocs };
+}
+
 function renderAutomationAssistant(data) {
-  const automationRate = Number(data.automation_rate || 0);
-  const manualDocs = Number(data.manual_documents || 0);
+  const { automationRate, manualDocs } = deriveAutomationStats(data);
   const reviewDocs = Number(data.needs_review || 0);
   const unassignedDocs = Number(data.manual_unassigned || 0);
   const missingContact = Number(data.missing_contact_email || 0);
@@ -1282,7 +1331,7 @@ async function loadAnalytics() {
   var review = data.needs_review || 0;
   var overdue = data.overdue || 0;
   var routed = data.routed_or_approved || 0;
-  var automation = Number(data.automation_rate || 0);
+  var automation = deriveAutomationStats(data).automationRate;
   var conf = data.average_confidence || 0;
 
   setText("metric-total", String(total));
@@ -1307,6 +1356,107 @@ async function loadAnalytics() {
   prevMetrics.routed = routed;
   prevMetrics.automation = Math.round(automation * 100);
   prevMetrics.confidence = Math.round(conf * 100);
+}
+
+async function loadClassifierInfo() {
+  try {
+    classifierInfo = await parseJSON(await apiFetch("/api/classifier/info"));
+  } catch (e) {
+    classifierInfo = { classifier_provider: "rules" };
+  }
+}
+
+async function loadActivityFeed() {
+  var feedEl = document.getElementById("activity-feed");
+  if (!feedEl) return;
+  try {
+    var data = await parseJSON(await apiFetch("/api/activity/recent?limit=12"));
+    var items = data.items || [];
+    if (!items.length) {
+      feedEl.innerHTML = '<span class="review-list-count">No recent activity</span>';
+      return;
+    }
+    feedEl.innerHTML = items.map(function (item) {
+      var action = String(item.action || "").replaceAll("_", " ");
+      var filename = item.filename || "";
+      var ago = timeAgo(item.created_at);
+      var actor = item.actor || "system";
+      return '<div class="activity-item">' +
+        '<span class="activity-action">' + escapeHtml(action) + '</span>' +
+        '<span class="activity-time">' + escapeHtml(ago) + '</span>' +
+        '<span class="activity-file">' + escapeHtml(filename) + '</span>' +
+        '<span class="activity-actor">' + escapeHtml(actor) + '</span>' +
+        '</div>';
+    }).join("");
+  } catch (e) {
+    feedEl.innerHTML = '<span class="review-list-count">Activity unavailable</span>';
+  }
+}
+
+function timeAgo(isoStr) {
+  if (!isoStr) return "";
+  var d = new Date(isoStr);
+  var sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 60) return "just now";
+  if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h ago";
+  return Math.floor(sec / 86400) + "d ago";
+}
+
+function sortDocumentsByPriority(items) {
+  return items.slice().sort(function (a, b) {
+    var aUrgent = (a.urgency === "high") ? 1 : 0;
+    var bUrgent = (b.urgency === "high") ? 1 : 0;
+    if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+    var aOverdue = isDocumentOverdue(a) ? 1 : 0;
+    var bOverdue = isDocumentOverdue(b) ? 1 : 0;
+    if (aOverdue !== bOverdue) return bOverdue - aOverdue;
+    var aReview = a.requires_review ? 1 : 0;
+    var bReview = b.requires_review ? 1 : 0;
+    if (aReview !== bReview) return bReview - aReview;
+    return 0;
+  });
+}
+
+async function quickApproveDoc(docId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  try {
+    await apiFetch("/api/documents/" + encodeURIComponent(docId) + "/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approve: true, actor: "dashboard_reviewer" }),
+    });
+    showToast("Document approved", "success");
+    await loadAll();
+  } catch (err) {
+    showToast("Approve failed: " + err.message, "error");
+  }
+}
+
+function navigateDocList(direction) {
+  if (!documentsCache.length) return;
+  var idx = documentsCache.findIndex(function (d) { return d.id === selectedDocumentId; });
+  var nextIdx = idx + direction;
+  if (nextIdx < 0) nextIdx = 0;
+  if (nextIdx >= documentsCache.length) nextIdx = documentsCache.length - 1;
+  var nextDoc = documentsCache[nextIdx];
+  if (nextDoc && nextDoc.id !== selectedDocumentId) {
+    selectedDocumentId = nextDoc.id;
+    loadDocumentDetail(nextDoc.id);
+    markSelectedDocumentCard();
+    var card = document.querySelector('.doc-card[data-doc-id="' + nextDoc.id + '"]');
+    if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+async function loadDocumentDetail(docId) {
+  try {
+    var doc = await parseJSON(await apiFetch("/api/documents/" + encodeURIComponent(docId)));
+    var auditData = await parseJSON(await apiFetch("/api/documents/" + encodeURIComponent(docId) + "/audit?limit=30"));
+    renderReviewDocument(doc, auditData.items || []);
+  } catch (err) {
+    showToast("Failed to load document: " + err.message, "error");
+  }
 }
 
 let _lastQueueData = [];
@@ -1356,7 +1506,8 @@ async function loadQueues() {
 async function loadDocuments() {
   const params = new URLSearchParams({ limit: "200" });
 
-  if (filterStatus && filterStatus.value) {
+  const PSEUDO_FILTERS = ["urgent", "unassigned"];
+  if (filterStatus && filterStatus.value && !PSEUDO_FILTERS.includes(filterStatus.value)) {
     params.set("status", filterStatus.value);
   }
 
@@ -1380,10 +1531,19 @@ async function loadDocuments() {
     summaryItems = summaryData.items || [];
   }
 
+  // Client-side pseudo-filters: urgent, unassigned
+  const filterVal = filterStatus ? filterStatus.value : "";
+  if (filterVal === "urgent") {
+    items = items.filter((doc) => doc.urgency === "high");
+  } else if (filterVal === "unassigned") {
+    items = items.filter((doc) => !doc.assigned_to || String(doc.assigned_to).trim() === "");
+  }
+
   const search = filterSearch ? filterSearch.value.trim().toLowerCase() : "";
   if (search) {
     items = items.filter((doc) => doc.filename.toLowerCase().includes(search));
   }
+  items = sortDocumentsByPriority(items);
   documentsCache = items.slice();
 
   // Update count
@@ -1436,11 +1596,24 @@ async function loadDocuments() {
         const dueLabel = dueText
           ? `<span class="${overdue ? "doc-card-overdue" : "doc-card-due"}">Due ${escapeHtml(dueText)}</span>`
           : "";
-        return `<div class="doc-card${doc.id === selectedDocumentId ? " is-selected" : ""}" data-doc-id="${safeDocId}">
+        const isHighUrgency = doc.urgency === "high";
+        const urgencyLabel = isHighUrgency ? '<span class="doc-card-urgency">HIGH</span>' : "";
+        const cardClasses = [
+          "doc-card",
+          doc.id === selectedDocumentId ? "is-selected" : "",
+          isHighUrgency ? "urgency-high" : "",
+          overdue ? "is-overdue-card" : "",
+        ].filter(Boolean).join(" ");
+        const quickActions = !bulkMode
+          ? `<span class="doc-card-actions"><button type="button" class="quick-approve-btn" data-quick-id="${safeDocId}" title="Quick Approve">✓</button></span>`
+          : "";
+        return `<div class="${cardClasses}" data-doc-id="${safeDocId}">
           <div class="doc-card-top">
             ${checkbox}
             <span class="doc-card-name">${safeFilename}</span>
+            ${urgencyLabel}
             <span class="${statusBadgeClass(doc)}">${safeStatusText}</span>
+            ${quickActions}
           </div>
           <div class="doc-card-bottom">
             <span class="pill">${safeDocType}</span>
@@ -1605,7 +1778,7 @@ async function loadAll() {
     }
     reviewListScroll.innerHTML = skeletonHtml;
   }
-  await Promise.all([loadAnalytics(), loadQueues(), loadDocuments(), loadWatcherStatus()]);
+  await Promise.all([loadAnalytics(), loadQueues(), loadDocuments(), loadWatcherStatus(), loadClassifierInfo(), loadActivityFeed()]);
   if (lastUpdated) {
     lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
   }
@@ -2871,6 +3044,65 @@ bindDocumentTab();
 bindAdvancedActions();
 clearReviewSelection();
 setBulkMode(false);
+
+// Quick-approve click delegation on doc list
+if (reviewListScroll) {
+  reviewListScroll.addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".quick-approve-btn");
+    if (btn) {
+      var docId = btn.dataset.quickId;
+      if (docId) quickApproveDoc(docId, ev);
+    }
+  });
+}
+
+// Keyboard shortcuts
+document.addEventListener("keydown", function (ev) {
+  // Don't fire shortcuts when typing in inputs
+  var tag = (ev.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+  var shortcutsModal = document.getElementById("shortcuts-modal");
+
+  if (ev.key === "?") {
+    if (shortcutsModal) shortcutsModal.hidden = !shortcutsModal.hidden;
+    return;
+  }
+  if (ev.key === "Escape") {
+    if (shortcutsModal && !shortcutsModal.hidden) { shortcutsModal.hidden = true; return; }
+    if (responseModal && !responseModal.hidden) { closeResponseModal(); return; }
+    if (selectedDocumentId) { clearReviewSelection(); return; }
+    return;
+  }
+  if (ev.key === "j") { navigateDocList(1); return; }
+  if (ev.key === "k") { navigateDocList(-1); return; }
+  if (ev.key === "a" && selectedDocumentId) {
+    quickApproveDoc(selectedDocumentId);
+    return;
+  }
+  if (ev.key === "e" && selectedDocumentId && respondButton) {
+    respondButton.click();
+    return;
+  }
+  if (ev.key === "r" && selectedDocumentId && reprocessButton) {
+    reprocessButton.click();
+    return;
+  }
+  if (ev.key === "/") {
+    ev.preventDefault();
+    if (filterSearch) filterSearch.focus();
+    return;
+  }
+});
+
+// Shortcuts modal close button
+var shortcutsCloseBtn = document.getElementById("shortcuts-modal-close");
+if (shortcutsCloseBtn) {
+  shortcutsCloseBtn.addEventListener("click", function () {
+    var modal = document.getElementById("shortcuts-modal");
+    if (modal) modal.hidden = true;
+  });
+}
 
 (async () => {
   await loadCurrentUser();

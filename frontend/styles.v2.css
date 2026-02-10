@@ -3063,3 +3063,217 @@ tbody tr.is-selected {
     transition: none !important;
   }
 }
+
+/* ========== Phase 2-7: UI Improvements ========== */
+
+/* Urgency badge */
+.urgency-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+}
+.urgency-badge.urgency-high {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  color: var(--danger-ink);
+}
+.urgency-badge.urgency-normal {
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+
+/* Classifier badge (AI vs Rules) */
+.classifier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+.classifier-badge.classifier-ai {
+  background: #f0f4ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+html[data-theme="dark"] .classifier-badge.classifier-ai {
+  background: #1e1b4b;
+  border-color: #4338ca;
+  color: #a5b4fc;
+}
+
+/* Doc card: urgency left-border accent */
+.doc-card.urgency-high {
+  border-left: 3px solid var(--danger-ink);
+}
+.doc-card.is-overdue-card {
+  background: color-mix(in srgb, var(--warning-bg) 40%, var(--surface));
+}
+
+/* Doc card: urgency pill inline */
+.doc-card-urgency {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--danger-ink);
+}
+
+/* Quick action buttons on doc card hover */
+.doc-card-actions {
+  display: none;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+.doc-card:hover .doc-card-actions {
+  display: inline-flex;
+}
+.doc-card-actions button {
+  padding: 0.125rem 0.375rem;
+  font-size: 0.6875rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.doc-card-actions button:hover {
+  background: var(--success-bg);
+  border-color: var(--success-line);
+  color: var(--success-ink);
+}
+
+/* Activity feed */
+.activity-panel {
+  grid-column: span 12;
+}
+.activity-feed {
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.activity-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.8125rem;
+}
+.activity-item:last-child { border-bottom: none; }
+.activity-action {
+  font-weight: 600;
+  color: var(--ink);
+}
+.activity-file {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+.activity-time {
+  color: var(--ink-faint);
+  font-size: 0.75rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.activity-actor {
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+}
+
+/* Keyboard shortcuts modal */
+.shortcuts-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 28, 38, 0.45);
+  backdrop-filter: blur(3px);
+}
+.shortcuts-modal[hidden] { display: none; }
+.shortcuts-modal-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 1.5rem;
+  width: min(28rem, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(20, 28, 38, 0.18);
+}
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem 1rem;
+  margin-top: 1rem;
+  font-size: 0.875rem;
+}
+.shortcuts-grid kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  box-shadow: 0 1px 0 var(--line);
+}
+.shortcuts-grid span {
+  display: flex;
+  align-items: center;
+  color: var(--ink-soft);
+}
+
+/* "AI Powered" header chip */
+.ai-powered-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+  border: 1px solid #c7d2fe;
+  color: #4338ca;
+}
+html[data-theme="dark"] .ai-powered-chip {
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  border-color: #4338ca;
+  color: #a5b4fc;
+}
+
+/* My Queue badge in sidebar */
+.sidebar-queue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-line);
+  color: var(--warning-ink);
+  font-size: 0.625rem;
+  font-weight: 700;
+  margin-left: auto;
+}
+.sidebar-queue-badge:empty,
+.sidebar-queue-badge[data-count="0"] { display: none; }

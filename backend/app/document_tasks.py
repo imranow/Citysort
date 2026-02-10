@@ -90,6 +90,15 @@ def process_document_by_id(
             except Exception:
                 pass  # Notification failure should not block pipeline.
 
+        # --- Automatic outbound emails (never block pipeline) ---
+        try:
+            from .auto_emails import send_auto_acknowledgment, send_auto_missing_info
+            send_auto_acknowledgment(document_id)
+            if result.get("missing_fields"):
+                send_auto_missing_info(document_id)
+        except Exception:
+            pass  # Auto-email failure must not block pipeline.
+
     except Exception as exc:  # pragma: no cover - runtime safeguard
         update_document(document_id, updates={"status": "failed", "requires_review": True})
         create_audit_event(

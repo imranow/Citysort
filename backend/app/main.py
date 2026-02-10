@@ -858,6 +858,50 @@ def get_analytics(request: Request = None) -> AnalyticsResponse:
     return AnalyticsResponse(**snapshot)
 
 
+@app.get("/api/classifier/info")
+def get_classifier_info(request: Request = None) -> dict:
+    """Return current classifier provider and email automation status."""
+    _enforce(request, role="viewer")
+    from .config import (
+        AUTO_ACK_EMAIL_ENABLED,
+        AUTO_ASSIGN_ENABLED,
+        AUTO_MISSING_INFO_EMAIL_ENABLED,
+        AUTO_STATUS_EMAIL_ENABLED,
+        CLASSIFIER_PROVIDER,
+        ESCALATION_DAYS,
+        ESCALATION_ENABLED,
+    )
+    return {
+        "classifier_provider": CLASSIFIER_PROVIDER,
+        "email_configured": email_configured(),
+        "auto_ack_email": AUTO_ACK_EMAIL_ENABLED,
+        "auto_status_email": AUTO_STATUS_EMAIL_ENABLED,
+        "auto_missing_info_email": AUTO_MISSING_INFO_EMAIL_ENABLED,
+        "auto_assign": AUTO_ASSIGN_ENABLED,
+        "escalation_enabled": ESCALATION_ENABLED,
+        "escalation_days": ESCALATION_DAYS,
+    }
+
+
+@app.get("/api/activity/recent")
+def get_recent_activity(request: Request = None, limit: int = Query(default=15, ge=1, le=50)) -> dict:
+    """Return recent audit events across all documents for the activity feed."""
+    _enforce(request, role="viewer")
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.document_id, a.action, a.actor, a.details, a.created_at,
+                   d.filename
+            FROM audit_events a
+            LEFT JOIN documents d ON d.id = a.document_id
+            ORDER BY a.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+
 @app.get("/api/platform/connectivity", response_model=ConnectivityResponse)
 def get_platform_connectivity(request: Request = None) -> ConnectivityResponse:
     _enforce(request, role="viewer")
@@ -1047,6 +1091,14 @@ def transition_document(
         title=f"{document['filename']}: {current} → {payload.status}",
         document_id=document_id,
     )
+
+    # Auto-send status update email to citizen on key transitions.
+    try:
+        from .auto_emails import send_auto_status_update
+        send_auto_status_update(document_id, payload.status)
+    except Exception:
+        pass  # Never block transition on email failure.
+
     return DocumentResponse(**updated)
 
 

@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210e" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210h" />
   </head>
   <body>
     <div class="app-shell">
@@ -399,6 +399,17 @@ FROM documents_to_ingest</textarea>
             <div id="review-summary-body" class="review-summary-list"></div>
           </section>
 
+          <!-- Overview-only: Recent Activity Feed -->
+          <section class="panel activity-panel" data-pages="overview">
+            <div class="section-head">
+              <h2>Recent Activity</h2>
+              <p>Audit trail</p>
+            </div>
+            <div id="activity-feed" class="activity-feed">
+              <span class="review-list-count">Loading activity...</span>
+            </div>
+          </section>
+
           <!-- Unified Document Review (split-pane) -->
           <section class="panel document-review-panel" data-pages="queues review">
             <div class="section-head">
@@ -445,6 +456,8 @@ FROM documents_to_ingest</textarea>
                       <option value="archived">Archived</option>
                       <option value="failed">Failed</option>
                       <option value="overdue">Overdue</option>
+                      <option value="urgent">Urgent (High Priority)</option>
+                      <option value="unassigned">Unassigned</option>
                     </select>
                     <input id="filter-search" type="text" placeholder="Search files…" />
                   </div>
@@ -492,6 +505,8 @@ FROM documents_to_ingest</textarea>
                         <span id="review-conf-pct">0%</span>
                       </span>
                       <span id="review-due-date" class="due-date-text">Due: -</span>
+                      <span id="review-urgency-badge" class="urgency-badge" hidden></span>
+                      <span id="review-classifier-badge" class="classifier-badge" hidden></span>
                     </div>
                   </div>
 
@@ -719,7 +734,26 @@ FROM documents_to_ingest</textarea>
         </div>
       </div>
     </div>
+    <!-- Keyboard shortcuts overlay -->
+    <div id="shortcuts-modal" class="shortcuts-modal" hidden>
+      <div class="shortcuts-modal-card">
+        <div class="response-modal-head">
+          <h3>Keyboard Shortcuts</h3>
+          <button type="button" id="shortcuts-modal-close" class="secondary">Close</button>
+        </div>
+        <div class="shortcuts-grid">
+          <kbd>a</kbd><span>Approve selected document</span>
+          <kbd>e</kbd><span>Open email composer</span>
+          <kbd>j</kbd><span>Next document</span>
+          <kbd>k</kbd><span>Previous document</span>
+          <kbd>r</kbd><span>Reprocess document</span>
+          <kbd>/</kbd><span>Focus search</span>
+          <kbd>Esc</kbd><span>Close modal / deselect</span>
+          <kbd>?</kbd><span>Show this help</span>
+        </div>
+      </div>
+    </div>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js?v=20260210e"></script>
+    <script src="/static/app.v2.js?v=20260210h"></script>
   </body>
 </html>

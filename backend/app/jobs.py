@@ -7,18 +7,27 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
-from .config import WORKER_ENABLED, WORKER_MAX_ATTEMPTS, WORKER_POLL_INTERVAL_SECONDS
+from .config import (
+    ESCALATION_DAYS,
+    ESCALATION_ENABLED,
+    ESCALATION_FALLBACK_USER,
+    WORKER_ENABLED,
+    WORKER_MAX_ATTEMPTS,
+    WORKER_POLL_INTERVAL_SECONDS,
+)
 from .db import get_connection
 from .document_tasks import process_document_by_id
 from .notifications import create_notification
 from .repository import (
     claim_next_job,
     complete_job,
+    create_audit_event,
     create_job,
     fail_job,
     get_job,
     list_jobs,
     list_overdue_documents,
+    update_document,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +54,18 @@ def _has_recent_overdue_notification(document_id: str) -> bool:
     return row is not None
 
 
+def _days_overdue(due_date_str: str) -> int:
+    """Return how many whole days a document is past its due date."""
+    try:
+        due_dt = datetime.fromisoformat(str(due_date_str).replace("Z", "+00:00"))
+        if due_dt.tzinfo is None:
+            due_dt = due_dt.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - due_dt
+        return max(0, delta.days)
+    except (ValueError, TypeError):
+        return 0
+
+
 def _run_overdue_sla_scan() -> None:
     overdue_documents = list_overdue_documents(limit=500)
     for document in overdue_documents:
@@ -54,13 +75,41 @@ def _run_overdue_sla_scan() -> None:
         filename = str(document.get("filename") or "Document")
         due_date = str(document.get("due_date") or "unknown")
         assigned_to = document.get("assigned_to")
+        days_late = _days_overdue(due_date)
+
         create_notification(
             type="overdue",
             title=f"Overdue: {filename}",
-            message=f"SLA due date passed ({due_date}).",
+            message=f"SLA due date passed ({due_date}). {days_late}d overdue.",
             user_id=str(assigned_to) if assigned_to else None,
             document_id=document_id,
         )
+
+        # --- Escalation: auto-reassign if overdue beyond threshold ---
+        if (
+            ESCALATION_ENABLED
+            and ESCALATION_FALLBACK_USER
+            and days_late >= ESCALATION_DAYS
+            and str(assigned_to or "") != ESCALATION_FALLBACK_USER
+        ):
+            try:
+                update_document(document_id, updates={"assigned_to": ESCALATION_FALLBACK_USER})
+                create_audit_event(
+                    document_id=document_id,
+                    action="auto_escalated",
+                    actor="system_escalation",
+                    details=f"Reassigned from {assigned_to or 'unassigned'} to {ESCALATION_FALLBACK_USER} ({days_late}d overdue)",
+                )
+                create_notification(
+                    type="assignment",
+                    title=f"Escalated: {filename}",
+                    message=f"Auto-reassigned after {days_late}d overdue.",
+                    user_id=ESCALATION_FALLBACK_USER,
+                    document_id=document_id,
+                )
+                logger.info("Auto-escalated doc %s to %s (%dd overdue)", document_id, ESCALATION_FALLBACK_USER, days_late)
+            except Exception as exc:
+                logger.warning("Escalation failed for %s: %s", document_id, exc)
 
 
 class DurableJobWorker:
