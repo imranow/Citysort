@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210" />
   </head>
   <body>
     <div class="app-shell">
@@ -130,11 +130,28 @@
         </div>
 
         <div class="sidebar-footer">
-          <span>CitySort AI MVP</span>
-          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" type="button">
-            <svg class="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06"/></svg>
-            <svg class="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8.5a5.5 5.5 0 01-7-7A5.5 5.5 0 108.5 13.5a5.5 5.5 0 005-5z"/></svg>
+          <button type="button" id="sidebar-toggle" class="sidebar-collapse-btn" aria-label="Collapse sidebar" title="Collapse sidebar">
+            <svg class="sidebar-collapse-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3L6 8l5 5"/></svg>
+            <svg class="sidebar-expand-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l5 5-5 5"/></svg>
           </button>
+          <span class="sidebar-footer-label">CitySort AI MVP</span>
+          <div class="sidebar-footer-actions">
+            <button id="notification-bell" class="notification-bell" aria-label="Toggle notifications" type="button">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5a3 3 0 00-3 3V7c0 1-.36 1.97-1.02 2.72L3 10.75V12h10v-1.25l-.98-1.03A4.02 4.02 0 0111 7V5.5a3 3 0 00-3-3z"/><path d="M6.5 13.5a1.5 1.5 0 003 0"/></svg>
+              <span id="notification-badge" class="notification-badge" hidden>0</span>
+            </button>
+            <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" type="button">
+              <svg class="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06"/></svg>
+              <svg class="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8.5a5.5 5.5 0 01-7-7A5.5 5.5 0 108.5 13.5a5.5 5.5 0 005-5z"/></svg>
+            </button>
+          </div>
+          <div id="notification-panel" class="notification-panel" hidden>
+            <div class="notification-panel-head">
+              <strong>Notifications</strong>
+              <button type="button" id="notifications-mark-all" class="secondary notification-panel-action">Mark all read</button>
+            </div>
+            <div id="notification-list" class="notification-list"></div>
+          </div>
         </div>
       </aside>
 
@@ -240,6 +257,16 @@
                 <strong id="metric-review" class="metric-value">0</strong>
                 <div class="metric-bar metric-bar--warning"><span class="metric-bar-fill" id="metric-review-bar"></span></div>
               </article>
+              <article class="metric-card metric-card--warning">
+                <div class="metric-header">
+                  <span>Overdue</span>
+                  <span class="metric-trend" id="metric-overdue-trend" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8l4-4 4 4"/></svg>
+                  </span>
+                </div>
+                <strong id="metric-overdue" class="metric-value">0</strong>
+                <div class="metric-bar metric-bar--warning"><span class="metric-bar-fill" id="metric-overdue-bar"></span></div>
+              </article>
               <article class="metric-card metric-card--success">
                 <div class="metric-header">
                   <span>Routed / Approved</span>
@@ -268,6 +295,7 @@
               <h2>Connectors</h2>
               <p>Data sources</p>
             </div>
+            <div id="watcher-status" class="watcher-status">Watcher: checking...</div>
 
             <!-- Connector Grid View (default) -->
             <div id="connectors-grid" class="connectors-grid"></div>
@@ -381,11 +409,34 @@ FROM documents_to_ingest</textarea>
                       <option value="">All statuses</option>
                       <option value="needs_review">Needs review</option>
                       <option value="routed">Routed</option>
+                      <option value="acknowledged">Acknowledged</option>
+                      <option value="assigned">Assigned</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="completed">Completed</option>
                       <option value="approved">Approved</option>
                       <option value="corrected">Corrected</option>
+                      <option value="archived">Archived</option>
                       <option value="failed">Failed</option>
+                      <option value="overdue">Overdue</option>
                     </select>
                     <input id="filter-search" type="text" placeholder="Search files…" />
+                  </div>
+                  <div class="review-list-actions">
+                    <button type="button" id="my-docs-chip" class="filter-chip">My Documents</button>
+                    <button type="button" id="bulk-toggle" class="secondary">Multi-select</button>
+                  </div>
+                  <div id="bulk-toolbar" class="bulk-toolbar" hidden>
+                    <label class="bulk-check" for="bulk-select-all">
+                      <input id="bulk-select-all" type="checkbox" />
+                      Select All
+                    </label>
+                    <span id="bulk-selected-count" class="review-list-count">0 selected</span>
+                    <div class="bulk-actions">
+                      <button type="button" id="bulk-approve">Approve</button>
+                      <button type="button" id="bulk-assign" class="secondary">Assign</button>
+                      <button type="button" id="bulk-export" class="secondary">Export CSV</button>
+                      <button type="button" id="bulk-cancel" class="secondary">Cancel</button>
+                    </div>
                   </div>
                   <span class="review-list-count" id="review-list-count">0 documents</span>
                 </div>
@@ -413,6 +464,7 @@ FROM documents_to_ingest</textarea>
                         <span class="confidence-track" style="width:60px"><span id="review-conf-bar" style="width:0%"></span></span>
                         <span id="review-conf-pct">0%</span>
                       </span>
+                      <span id="review-due-date" class="due-date-text">Due: -</span>
                     </div>
                   </div>
 
@@ -458,6 +510,11 @@ FROM documents_to_ingest</textarea>
                       <label for="review-department">Correct department (optional)</label>
                       <input id="review-department" type="text" placeholder="Leave blank to keep current" />
 
+                      <label for="review-assigned-to">Assign to</label>
+                      <select id="review-assigned-to">
+                        <option value="">(Unassigned)</option>
+                      </select>
+
                       <label for="review-notes">Reviewer notes (optional)</label>
                       <textarea id="review-notes" rows="2" placeholder="Brief reason for your decision"></textarea>
 
@@ -465,7 +522,9 @@ FROM documents_to_ingest</textarea>
                         <button type="submit">Approve</button>
                         <button type="button" id="reject" class="secondary">Keep In Review</button>
                         <button type="button" id="reprocess" class="secondary">Reprocess</button>
+                        <button type="button" id="respond-btn" class="secondary">Respond</button>
                       </div>
+                      <div id="transition-actions" class="transition-actions"></div>
 
                       <details class="rules-advanced review-advanced">
                         <summary>Advanced Details</summary>
@@ -611,7 +670,51 @@ FROM documents_to_ingest</textarea>
         });
       })();
     </script>
+    <div id="response-modal" class="response-modal" hidden>
+      <div class="response-modal-card">
+        <div class="response-modal-head">
+          <h3>Response Template</h3>
+          <button type="button" id="response-modal-close" class="secondary" data-close-response-modal>Close</button>
+        </div>
+        <label for="response-template-select">Template</label>
+        <select id="response-template-select"></select>
+        <label for="response-rendered-preview">Preview</label>
+        <pre id="response-rendered-preview" class="mono-block response-preview">Select a template.</pre>
+        <div class="actions">
+          <button type="button" id="response-copy-btn">Copy to Clipboard</button>
+          <button type="button" id="response-cancel-btn" class="secondary" data-close-response-modal>Cancel</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const modal = document.getElementById("response-modal");
+        if (!modal) return;
+
+        const closeModal = () => {
+          modal.hidden = true;
+        };
+
+        document.addEventListener("click", (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          if (target.closest("[data-close-response-modal]")) {
+            closeModal();
+            return;
+          }
+          if (target === modal) {
+            closeModal();
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && !modal.hidden) {
+            closeModal();
+          }
+        });
+      })();
+    </script>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js"></script>
+    <script src="/static/app.v2.js?v=20260210"></script>
   </body>
 </html>

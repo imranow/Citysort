@@ -16,6 +16,7 @@ def _default_other_rule() -> RuleDefinition:
         "keywords": [],
         "department": "General Intake",
         "required_fields": ["applicant_name", "date"],
+        "sla_days": None,
     }
 
 
@@ -67,10 +68,17 @@ def normalize_rules(candidate: dict[str, Any]) -> RuleMap:
             raise ValueError(f"rule '{doc_type}.required_fields' must be a list")
         required_fields = _dedupe([str(item).strip() for item in required_fields_raw if str(item).strip()])
 
+        sla_days_raw = raw_rule.get("sla_days")
+        if sla_days_raw in (None, ""):
+            sla_days = None
+        else:
+            sla_days = int(sla_days_raw)
+
         normalized[doc_type] = {
             "keywords": keywords,
             "department": department,
             "required_fields": required_fields,
+            "sla_days": sla_days,
         }
 
     if "other" not in normalized:

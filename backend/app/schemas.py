@@ -22,6 +22,9 @@ class DocumentResponse(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     validation_errors: list[str] = Field(default_factory=list)
     reviewer_notes: Optional[str] = None
+    due_date: Optional[str] = None
+    sla_days: Optional[int] = None
+    assigned_to: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -51,6 +54,7 @@ class AnalyticsResponse(BaseModel):
     needs_review: int
     routed_or_approved: int
     average_confidence: float
+    overdue: int = 0
     by_type: list[MetricBucket] = Field(default_factory=list)
     by_status: list[MetricBucket] = Field(default_factory=list)
 
@@ -81,6 +85,7 @@ class RuleDefinition(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     department: str
     required_fields: list[str] = Field(default_factory=list)
+    sla_days: Optional[int] = None
 
 
 class RulesConfigResponse(BaseModel):
@@ -299,3 +304,85 @@ class JobRecord(BaseModel):
 
 class JobListResponse(BaseModel):
     items: list[JobRecord] = Field(default_factory=list)
+
+
+# --- Notifications ---
+
+class NotificationRecord(BaseModel):
+    id: int
+    user_id: Optional[str] = None
+    type: str
+    title: str
+    message: Optional[str] = None
+    document_id: Optional[str] = None
+    is_read: bool = False
+    created_at: str
+    read_at: Optional[str] = None
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationRecord] = Field(default_factory=list)
+    unread_count: int = 0
+
+
+# --- Workflow Transitions ---
+
+class TransitionRequest(BaseModel):
+    status: str
+    notes: Optional[str] = None
+    actor: str = "dashboard_reviewer"
+
+
+# --- Assignment ---
+
+class AssignRequest(BaseModel):
+    user_id: str
+    actor: str = "dashboard_reviewer"
+
+
+# --- Response Templates ---
+
+class TemplateRecord(BaseModel):
+    id: int
+    name: str
+    doc_type: Optional[str] = None
+    template_body: str
+    created_at: str
+    updated_at: str
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str
+    doc_type: Optional[str] = None
+    template_body: str
+
+
+class TemplateUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    doc_type: Optional[str] = None
+    template_body: Optional[str] = None
+
+
+class TemplateListResponse(BaseModel):
+    items: list[TemplateRecord] = Field(default_factory=list)
+
+
+class TemplateRenderResponse(BaseModel):
+    rendered: str
+    template_name: str
+    document_id: str
+
+
+# --- Bulk Operations ---
+
+class BulkActionRequest(BaseModel):
+    action: str
+    document_ids: list[str]
+    params: dict[str, Any] = Field(default_factory=dict)
+    actor: str = "dashboard_reviewer"
+
+
+class BulkActionResponse(BaseModel):
+    success_count: int
+    error_count: int
+    errors: list[str] = Field(default_factory=list)

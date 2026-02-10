@@ -206,7 +206,96 @@ def init_db() -> None:
             """
         )
 
-        # Safe migrations for existing local databases.
+        # --- New tables for admin automation features ---
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT,
+                document_id TEXT,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                read_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+            ON notifications (user_id, is_read, created_at DESC)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS watched_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL,
+                file_hash TEXT NOT NULL UNIQUE,
+                source_path TEXT NOT NULL,
+                document_id TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_watched_files_hash
+            ON watched_files (file_hash)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                doc_type TEXT,
+                template_body TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # Seed default templates if table is empty.
+        template_count = connection.execute("SELECT COUNT(*) AS c FROM templates").fetchone()["c"]
+        if template_count == 0:
+            from datetime import datetime, timezone
+            _now = datetime.now(timezone.utc).isoformat()
+            connection.executemany(
+                "INSERT INTO templates (name, doc_type, template_body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        "Acknowledgment Letter",
+                        None,
+                        "Dear {{applicant_name}},\n\nThank you for your submission. We have received your {{doc_type}} (file: {{filename}}) and it has been routed to the {{department}} department.\n\nYour reference number is {{id}}.\n\nPlease allow up to 10 business days for processing. If you have questions, reply to this message with your reference number.\n\nSincerely,\nCity Records Office",
+                        _now,
+                        _now,
+                    ),
+                    (
+                        "Status Update",
+                        None,
+                        "Dear {{applicant_name}},\n\nThis is an update regarding your {{doc_type}} submission (ref: {{id}}).\n\nCurrent status: {{status}}\nDepartment: {{department}}\n\nIf you have questions or need to provide additional information, please contact the {{department}} department.\n\nSincerely,\nCity Records Office",
+                        _now,
+                        _now,
+                    ),
+                    (
+                        "Request for Information",
+                        None,
+                        "Dear {{applicant_name}},\n\nWe are reviewing your {{doc_type}} submission (ref: {{id}}), but require additional information before we can proceed.\n\nPlease provide the following:\n- [Describe missing information here]\n\nYou may reply to this message or visit the {{department}} department in person.\n\nSincerely,\nCity Records Office",
+                        _now,
+                        _now,
+                    ),
+                ],
+            )
+
+        # --- Safe migrations for existing local databases ---
+
         deployment_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(deployments)").fetchall()
         }
@@ -214,3 +303,21 @@ def init_db() -> None:
             connection.execute("ALTER TABLE deployments ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'")
         if "external_id" not in deployment_columns:
             connection.execute("ALTER TABLE deployments ADD COLUMN external_id TEXT")
+
+        # Add new columns to documents table for SLA, assignment.
+        doc_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        if "due_date" not in doc_columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN due_date TEXT")
+        if "sla_days" not in doc_columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN sla_days INTEGER")
+        if "assigned_to" not in doc_columns:
+            connection.execute("ALTER TABLE documents ADD COLUMN assigned_to TEXT")
+
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_due_date ON documents (due_date)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_assigned_to ON documents (assigned_to, status)"
+        )

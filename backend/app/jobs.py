@@ -3,16 +3,64 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
 from .config import WORKER_ENABLED, WORKER_MAX_ATTEMPTS, WORKER_POLL_INTERVAL_SECONDS
+from .db import get_connection
 from .document_tasks import process_document_by_id
-from .repository import claim_next_job, complete_job, create_job, fail_job, get_job, list_jobs
+from .notifications import create_notification
+from .repository import (
+    claim_next_job,
+    complete_job,
+    create_job,
+    fail_job,
+    get_job,
+    list_jobs,
+    list_overdue_documents,
+)
 
 logger = logging.getLogger(__name__)
 
 JobHandler = Callable[[dict[str, Any]], dict[str, Any]]
+SLA_CHECK_INTERVAL_SECONDS = 15 * 60
+OVERDUE_NOTIFICATION_LOOKBACK_MINUTES = 24 * 60
+
+
+def _has_recent_overdue_notification(document_id: str) -> bool:
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=OVERDUE_NOTIFICATION_LOOKBACK_MINUTES)).isoformat()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id FROM notifications
+            WHERE type = 'overdue'
+              AND document_id = ?
+              AND created_at >= ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (document_id, cutoff),
+        ).fetchone()
+    return row is not None
+
+
+def _run_overdue_sla_scan() -> None:
+    overdue_documents = list_overdue_documents(limit=500)
+    for document in overdue_documents:
+        document_id = str(document.get("id") or "").strip()
+        if not document_id or _has_recent_overdue_notification(document_id):
+            continue
+        filename = str(document.get("filename") or "Document")
+        due_date = str(document.get("due_date") or "unknown")
+        assigned_to = document.get("assigned_to")
+        create_notification(
+            type="overdue",
+            title=f"Overdue: {filename}",
+            message=f"SLA due date passed ({due_date}).",
+            user_id=str(assigned_to) if assigned_to else None,
+            document_id=document_id,
+        )
 
 
 class DurableJobWorker:
@@ -43,7 +91,16 @@ class DurableJobWorker:
         logger.info("Stopped durable job worker %s", self.worker_id)
 
     def _run_loop(self) -> None:
+        next_sla_check_at = 0.0
         while not self._stop_event.is_set():
+            now = time.monotonic()
+            if now >= next_sla_check_at:
+                try:
+                    _run_overdue_sla_scan()
+                except Exception as exc:  # pragma: no cover - runtime safeguard
+                    logger.exception("Overdue SLA scan failed: %s", exc)
+                next_sla_check_at = now + SLA_CHECK_INTERVAL_SECONDS
+
             job = claim_next_job(worker_id=self.worker_id)
             if not job:
                 time.sleep(WORKER_POLL_INTERVAL_SECONDS)

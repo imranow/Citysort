@@ -140,6 +140,15 @@ WORKER_POLL_INTERVAL_SECONDS = _env_int("CITYSORT_WORKER_POLL_INTERVAL_SECONDS",
 WORKER_MAX_ATTEMPTS = _env_int("CITYSORT_WORKER_MAX_ATTEMPTS", 3, min_value=1, max_value=10)
 WORKER_ENABLED = _env_bool("CITYSORT_WORKER_ENABLED", True)
 
+# Watched folder ingestion
+WATCH_DIR = os.getenv("CITYSORT_WATCH_DIR", "").strip() or None
+WATCH_INTERVAL_SECONDS = _env_int("CITYSORT_WATCH_INTERVAL_SECONDS", 30, min_value=5, max_value=300)
+WATCH_ENABLED = _env_bool("CITYSORT_WATCH_ENABLED", False)
+
+# Notifications / Webhooks
+WEBHOOK_URL = os.getenv("CITYSORT_WEBHOOK_URL", "").strip()
+WEBHOOK_ENABLED = _env_bool("CITYSORT_WEBHOOK_ENABLED", False)
+
 # Deployment integration
 DEPLOY_PROVIDER = os.getenv("CITYSORT_DEPLOY_PROVIDER", "local").strip().lower()
 DEPLOY_COMMAND = os.getenv("CITYSORT_DEPLOY_COMMAND", "").strip()

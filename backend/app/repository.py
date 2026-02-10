@@ -84,18 +84,33 @@ def get_document(document_id: str) -> Optional[dict[str, Any]]:
     return _deserialize_row(row) if row else None
 
 
-def list_documents(*, status: Optional[str] = None, department: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+def list_documents(
+    *,
+    status: Optional[str] = None,
+    department: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
     query = "SELECT * FROM documents"
     conditions: list[str] = []
     params: list[Any] = []
 
     if status:
-        conditions.append("status = ?")
-        params.append(status)
+        if status == "overdue":
+            conditions.append("due_date IS NOT NULL AND due_date < ?")
+            conditions.append("status NOT IN ('approved', 'corrected', 'completed', 'archived')")
+            params.append(utcnow_iso())
+        else:
+            conditions.append("status = ?")
+            params.append(status)
 
     if department:
         conditions.append("department = ?")
         params.append(department)
+
+    if assigned_to:
+        conditions.append("assigned_to = ?")
+        params.append(assigned_to)
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -162,7 +177,7 @@ def get_queue_snapshot() -> list[dict[str, Any]]:
                 COALESCE(department, 'Unassigned') AS department,
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review,
-                SUM(CASE WHEN status IN ('routed', 'approved', 'corrected') THEN 1 ELSE 0 END) AS ready
+                SUM(CASE WHEN status IN ('routed', 'approved', 'corrected', 'acknowledged', 'assigned', 'in_progress', 'completed') THEN 1 ELSE 0 END) AS ready
             FROM documents
             GROUP BY COALESCE(department, 'Unassigned')
             ORDER BY total DESC, department ASC
@@ -222,8 +237,18 @@ def get_analytics_snapshot() -> dict[str, Any]:
             """
         ).fetchall()
 
+        overdue_row = connection.execute(
+            """
+            SELECT COUNT(*) AS total FROM documents
+            WHERE due_date IS NOT NULL AND due_date < ?
+            AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
+            """,
+            (utcnow_iso(),),
+        ).fetchone()
+
     analytics["by_type"] = [dict(row) for row in by_type_rows]
     analytics["by_status"] = [dict(row) for row in by_status_rows]
+    analytics["overdue"] = int(overdue_row["total"]) if overdue_row else 0
 
     return analytics
 
@@ -737,6 +762,44 @@ def fail_job(*, job_id: str, error: str) -> Optional[dict[str, Any]]:
         )
         updated = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     return _deserialize_job(updated) if updated else None
+
+
+def count_overdue_documents() -> int:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS total FROM documents
+            WHERE due_date IS NOT NULL AND due_date < ?
+            AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
+            """,
+            (now,),
+        ).fetchone()
+    return int(row["total"]) if row else 0
+
+
+def list_overdue_documents(*, limit: int = 100) -> list[dict[str, Any]]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM documents
+            WHERE due_date IS NOT NULL AND due_date < ?
+            AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
+            ORDER BY due_date ASC LIMIT ?
+            """,
+            (now, limit),
+        ).fetchall()
+    return [_deserialize_row(row) for row in rows]
+
+
+def list_assigned_to(user_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM documents WHERE assigned_to = ? ORDER BY updated_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [_deserialize_row(row) for row in rows]
 
 
 def _deserialize_job(row: Any) -> dict[str, Any]:

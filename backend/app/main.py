@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,12 +58,30 @@ from .repository import (
     list_deployments,
     list_documents,
     list_invitations,
+    list_overdue_documents,
     revoke_api_key,
     update_document,
 )
+from .notifications import (
+    count_unread,
+    create_notification,
+    list_notifications,
+    mark_all_read,
+    mark_read,
+)
 from .rules import get_active_rules, get_rules_path, reset_rules_to_default, save_rules
+from .templates import (
+    create_template as create_template_record,
+    delete_template,
+    get_template,
+    list_templates,
+    render_template,
+    update_template,
+)
+from .watcher import start_watcher, stop_watcher
 from .schemas import (
     AnalyticsResponse,
+    AssignRequest,
     AuthBootstrapRequest,
     AuthLoginRequest,
     AuthResponse,
@@ -71,6 +90,8 @@ from .schemas import (
     ApiKeyListResponse,
     ApiKeyRecord,
     AuditTrailResponse,
+    BulkActionRequest,
+    BulkActionResponse,
     ConnectivityResponse,
     ConnectorTestRequest,
     ConnectorTestResponse,
@@ -86,12 +107,20 @@ from .schemas import (
     InvitationCreateResponse,
     InvitationListResponse,
     ManualDeploymentRequest,
+    NotificationListResponse,
+    NotificationRecord,
     PlatformSummaryResponse,
     QueueResponse,
     RulesConfigResponse,
     RulesConfigUpdate,
     ReviewRequest,
     ServiceHealth,
+    TemplateCreateRequest,
+    TemplateListResponse,
+    TemplateRecord,
+    TemplateRenderResponse,
+    TemplateUpdateRequest,
+    TransitionRequest,
     UserCreateRequest,
     UserListResponse,
     UserRecord,
@@ -240,11 +269,29 @@ def _connectivity_snapshot() -> ConnectivityResponse:
 def startup_event() -> None:
     init_db()
     start_job_worker()
+    start_watcher()
 
 
 @app.on_event("shutdown")
 def shutdown_event() -> None:
     stop_job_worker()
+    stop_watcher()
+
+
+# --- Workflow state machine ---
+
+ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "ingested": {"needs_review", "routed"},
+    "needs_review": {"acknowledged", "approved", "corrected"},
+    "routed": {"acknowledged", "approved"},
+    "acknowledged": {"assigned", "approved", "in_progress"},
+    "assigned": {"in_progress", "approved"},
+    "in_progress": {"completed", "approved"},
+    "completed": {"archived"},
+    "approved": {"archived"},
+    "corrected": {"archived"},
+    "failed": {"needs_review", "ingested"},
+}
 
 
 @app.get("/health")
@@ -588,12 +635,27 @@ def get_documents(
     request: Request = None,
     status: Optional[str] = Query(default=None),
     department: Optional[str] = Query(default=None),
+    assigned_to: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> DocumentListResponse:
     _enforce(request, role="viewer")
     items: list[DocumentResponse] = []
-    for item in list_documents(status=status, department=department, limit=limit):
+    for item in list_documents(status=status, department=department, assigned_to=assigned_to, limit=limit):
         # Keep list endpoint light; full text is available from document detail endpoint.
+        item_payload = dict(item)
+        item_payload["extracted_text"] = None
+        items.append(DocumentResponse(**item_payload))
+    return DocumentListResponse(items=items)
+
+
+@app.get("/api/documents/overdue", response_model=DocumentListResponse)
+def get_overdue_documents(
+    request: Request = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> DocumentListResponse:
+    _enforce(request, role="viewer")
+    items: list[DocumentResponse] = []
+    for item in list_overdue_documents(limit=limit):
         item_payload = dict(item)
         item_payload["extracted_text"] = None
         items.append(DocumentResponse(**item_payload))
@@ -929,3 +991,296 @@ def get_worker_job(job_id: str, request: Request = None) -> JobRecord:
     if not record:
         raise HTTPException(status_code=404, detail="Job not found.")
     return JobRecord(**record)
+
+
+# =====================================================================
+# Workflow Transitions (Feature 4)
+# =====================================================================
+
+@app.post("/api/documents/{document_id}/transition", response_model=DocumentResponse)
+def transition_document(
+    document_id: str, payload: TransitionRequest, request: Request = None
+) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    current = document["status"]
+    allowed = ALLOWED_TRANSITIONS.get(current, set())
+    if payload.status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from '{current}' to '{payload.status}'. Allowed: {sorted(allowed)}",
+        )
+
+    updates: dict[str, object] = {"status": payload.status}
+    if payload.notes:
+        updates["reviewer_notes"] = payload.notes
+
+    updated = update_document(document_id, updates=updates)
+    create_audit_event(
+        document_id=document_id,
+        action="status_transition",
+        actor=str(identity.get("actor", payload.actor)),
+        details=f"from={current} to={payload.status}",
+    )
+    create_notification(
+        type="status_change",
+        title=f"{document['filename']}: {current} → {payload.status}",
+        document_id=document_id,
+    )
+    return DocumentResponse(**updated)
+
+
+# =====================================================================
+# Assignment (Feature 5)
+# =====================================================================
+
+@app.post("/api/documents/{document_id}/assign", response_model=DocumentResponse)
+def assign_document(
+    document_id: str, payload: AssignRequest, request: Request = None
+) -> DocumentResponse:
+    identity = _enforce(request, role="operator")
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    updates: dict[str, object] = {"assigned_to": payload.user_id}
+    if document["status"] in ("needs_review", "acknowledged"):
+        updates["status"] = "assigned"
+
+    updated = update_document(document_id, updates=updates)
+    create_audit_event(
+        document_id=document_id,
+        action="assigned",
+        actor=str(identity.get("actor", payload.actor)),
+        details=f"assigned_to={payload.user_id}",
+    )
+    create_notification(
+        type="assignment",
+        title=f"Document assigned to you: {document['filename']}",
+        message=f"Type: {document.get('doc_type', '-')}",
+        user_id=payload.user_id,
+        document_id=document_id,
+    )
+    return DocumentResponse(**updated)
+
+
+# =====================================================================
+# Notifications (Feature 2)
+# =====================================================================
+
+@app.get("/api/notifications", response_model=NotificationListResponse)
+def get_notifications(
+    request: Request = None,
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> NotificationListResponse:
+    identity = _enforce(request, role="viewer")
+    user = identity.get("user")
+    user_id = user.get("id") if isinstance(user, dict) else None
+    items = list_notifications(user_id=user_id, unread_only=unread_only, limit=limit)
+    unread = count_unread(user_id=user_id)
+    return NotificationListResponse(
+        items=[NotificationRecord(**n) for n in items],
+        unread_count=unread,
+    )
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def read_notification(notification_id: int, request: Request = None):
+    identity = _enforce(request, role="viewer")
+    user = identity.get("user")
+    user_id = user.get("id") if isinstance(user, dict) else None
+    result = mark_read(notification_id, user_id=user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return NotificationRecord(**result)
+
+
+@app.post("/api/notifications/read-all")
+def read_all_notifications(request: Request = None):
+    identity = _enforce(request, role="viewer")
+    user = identity.get("user")
+    user_id = user.get("id") if isinstance(user, dict) else None
+    count = mark_all_read(user_id=user_id)
+    return {"marked_read": count}
+
+
+# =====================================================================
+# Watcher Status (Feature 3)
+# =====================================================================
+
+@app.get("/api/watcher/status")
+def get_watcher_status(request: Request = None):
+    _enforce(request, role="viewer")
+    from .config import WATCH_DIR, WATCH_ENABLED, WATCH_INTERVAL_SECONDS
+    from .db import get_connection as _get_conn
+
+    with _get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) AS total FROM watched_files").fetchone()
+    return {
+        "enabled": WATCH_ENABLED,
+        "watch_dir": WATCH_DIR,
+        "interval_seconds": WATCH_INTERVAL_SECONDS,
+        "files_ingested": row["total"] if row else 0,
+    }
+
+
+# =====================================================================
+# Response Templates (Feature 6)
+# =====================================================================
+
+@app.get("/api/templates", response_model=TemplateListResponse)
+def get_templates(
+    request: Request = None,
+    doc_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> TemplateListResponse:
+    _enforce(request, role="viewer")
+    items = [TemplateRecord(**t) for t in list_templates(doc_type=doc_type, limit=limit)]
+    return TemplateListResponse(items=items)
+
+
+@app.post("/api/templates", response_model=TemplateRecord)
+def create_new_template(payload: TemplateCreateRequest, request: Request = None) -> TemplateRecord:
+    _enforce(request, role="operator")
+    record = create_template_record(
+        name=payload.name,
+        doc_type=payload.doc_type,
+        template_body=payload.template_body,
+    )
+    return TemplateRecord(**record)
+
+
+@app.get("/api/templates/{template_id}", response_model=TemplateRecord)
+def get_template_by_id(template_id: int, request: Request = None) -> TemplateRecord:
+    _enforce(request, role="viewer")
+    record = get_template(template_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return TemplateRecord(**record)
+
+
+@app.put("/api/templates/{template_id}", response_model=TemplateRecord)
+def update_template_by_id(
+    template_id: int, payload: TemplateUpdateRequest, request: Request = None
+) -> TemplateRecord:
+    _enforce(request, role="operator")
+    record = update_template(
+        template_id,
+        name=payload.name,
+        doc_type=payload.doc_type,
+        template_body=payload.template_body,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return TemplateRecord(**record)
+
+
+@app.delete("/api/templates/{template_id}")
+def delete_template_by_id(template_id: int, request: Request = None):
+    _enforce(request, role="operator")
+    if not delete_template(template_id):
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"deleted": True}
+
+
+@app.post(
+    "/api/templates/{template_id}/render/{document_id}",
+    response_model=TemplateRenderResponse,
+)
+def render_template_for_document(
+    template_id: int, document_id: str, request: Request = None
+) -> TemplateRenderResponse:
+    _enforce(request, role="viewer")
+    template_record = get_template(template_id)
+    if not template_record:
+        raise HTTPException(status_code=404, detail="Template not found")
+    try:
+        rendered = render_template(template_id, document_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return TemplateRenderResponse(
+        rendered=rendered,
+        template_name=template_record["name"],
+        document_id=document_id,
+    )
+
+
+# =====================================================================
+# Bulk Operations (Feature 7)
+# =====================================================================
+
+@app.post("/api/documents/bulk", response_model=BulkActionResponse)
+def bulk_document_action(payload: BulkActionRequest, request: Request = None) -> BulkActionResponse:
+    identity = _enforce(request, role="operator")
+    actor = str(identity.get("actor", payload.actor))
+    success_count = 0
+    errors: list[str] = []
+
+    for doc_id in payload.document_ids:
+        try:
+            doc = get_document(doc_id)
+            if not doc:
+                errors.append(f"{doc_id}: not found")
+                continue
+
+            if payload.action == "approve":
+                update_document(doc_id, updates={
+                    "status": "approved",
+                    "requires_review": False,
+                    "missing_fields": [],
+                    "validation_errors": [],
+                })
+                create_audit_event(
+                    document_id=doc_id, action="bulk_approved", actor=actor,
+                )
+
+            elif payload.action == "assign":
+                user_id = payload.params.get("user_id")
+                if not user_id:
+                    errors.append(f"{doc_id}: user_id required for assign")
+                    continue
+                updates_map: dict[str, object] = {"assigned_to": user_id}
+                if doc["status"] in ("needs_review", "acknowledged"):
+                    updates_map["status"] = "assigned"
+                update_document(doc_id, updates=updates_map)
+                create_audit_event(
+                    document_id=doc_id,
+                    action="bulk_assigned",
+                    actor=actor,
+                    details=f"assigned_to={user_id}",
+                )
+
+            elif payload.action == "transition":
+                target_status = payload.params.get("status")
+                if not target_status:
+                    errors.append(f"{doc_id}: status required for transition")
+                    continue
+                allowed = ALLOWED_TRANSITIONS.get(doc["status"], set())
+                if target_status not in allowed:
+                    errors.append(f"{doc_id}: invalid transition {doc['status']} → {target_status}")
+                    continue
+                update_document(doc_id, updates={"status": target_status})
+                create_audit_event(
+                    document_id=doc_id,
+                    action="bulk_transition",
+                    actor=actor,
+                    details=f"to={target_status}",
+                )
+
+            else:
+                errors.append(f"{doc_id}: unknown action '{payload.action}'")
+                continue
+
+            success_count += 1
+        except Exception as exc:
+            errors.append(f"{doc_id}: {exc}")
+
+    return BulkActionResponse(
+        success_count=success_count,
+        error_count=len(errors),
+        errors=errors[:50],
+    )

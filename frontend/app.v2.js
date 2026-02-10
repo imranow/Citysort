@@ -29,6 +29,7 @@ const reviewStatus = document.getElementById("review-status");
 const reviewId = document.getElementById("review-id");
 const reviewDocType = document.getElementById("review-doc-type");
 const reviewDepartment = document.getElementById("review-department");
+const reviewAssignedTo = document.getElementById("review-assigned-to");
 const reviewNotes = document.getElementById("review-notes");
 const reviewFieldsJson = document.getElementById("review-fields-json");
 const connectorsGrid = document.getElementById("connectors-grid");
@@ -49,11 +50,14 @@ const reviewBadgeType = document.getElementById("review-badge-type");
 const reviewBadgeDept = document.getElementById("review-badge-dept");
 const reviewConfBar = document.getElementById("review-conf-bar");
 const reviewConfPct = document.getElementById("review-conf-pct");
+const reviewDueDate = document.getElementById("review-due-date");
 const reviewMissing = document.getElementById("review-missing");
 const reviewErrors = document.getElementById("review-errors");
 const reviewMissingSection = document.getElementById("review-missing-section");
 const reviewErrorsSection = document.getElementById("review-errors-section");
 const reviewAudit = document.getElementById("review-audit");
+const transitionActions = document.getElementById("transition-actions");
+const respondButton = document.getElementById("respond-btn");
 
 const detailTabs = document.getElementById("detail-tabs");
 const detailPanelReview = document.getElementById("detail-panel-review");
@@ -80,11 +84,55 @@ const rulesBuilder = document.getElementById("rules-builder");
 const uploadButton = document.getElementById("upload-submit-btn");
 const uploadDropzone = document.getElementById("upload-dropzone");
 const uploadFileList = document.getElementById("upload-file-list");
+const watcherStatus = document.getElementById("watcher-status");
+const notificationBell = document.getElementById("notification-bell");
+const notificationBadge = document.getElementById("notification-badge");
+const notificationPanel = document.getElementById("notification-panel");
+const notificationList = document.getElementById("notification-list");
+const notificationsMarkAll = document.getElementById("notifications-mark-all");
+const myDocsChip = document.getElementById("my-docs-chip");
+const bulkToggle = document.getElementById("bulk-toggle");
+const bulkToolbar = document.getElementById("bulk-toolbar");
+const bulkSelectAll = document.getElementById("bulk-select-all");
+const bulkSelectedCount = document.getElementById("bulk-selected-count");
+const bulkApproveBtn = document.getElementById("bulk-approve");
+const bulkAssignBtn = document.getElementById("bulk-assign");
+const bulkExportBtn = document.getElementById("bulk-export");
+const bulkCancelBtn = document.getElementById("bulk-cancel");
+const responseModal = document.getElementById("response-modal");
+const responseModalClose = document.getElementById("response-modal-close");
+const responseCancelBtn = document.getElementById("response-cancel-btn");
+const responseTemplateSelect = document.getElementById("response-template-select");
+const responseRenderedPreview = document.getElementById("response-rendered-preview");
+const responseCopyBtn = document.getElementById("response-copy-btn");
 const AUTH_TOKEN_KEY = "citysort_access_token";
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
 let selectedDocumentId = "";
 let activeRules = {};
+let currentUserId = "";
+let currentUserEmail = "";
+let userCache = [];
+let documentsCache = [];
+let bulkMode = false;
+const bulkSelected = new Set();
+let templateCache = [];
+let notificationsPollHandle = null;
+
+const TRANSITIONS = {
+  ingested: ["needs_review", "routed"],
+  needs_review: ["acknowledged", "approved", "corrected"],
+  routed: ["acknowledged", "approved"],
+  acknowledged: ["assigned", "approved", "in_progress"],
+  assigned: ["in_progress", "approved"],
+  in_progress: ["completed", "approved"],
+  completed: ["archived"],
+  approved: ["archived"],
+  corrected: ["archived"],
+  failed: ["needs_review", "ingested"],
+};
+
+const OVERDUE_DONE_STATUSES = new Set(["approved", "corrected", "completed", "archived"]);
 
 const toastContainer = document.getElementById("toast-container");
 const toastIcons = {
@@ -175,6 +223,7 @@ function ensureOtherRule(rules) {
       keywords: [],
       department: "General Intake",
       required_fields: ["applicant_name", "date"],
+      sla_days: null,
     };
   }
   return rules;
@@ -186,6 +235,7 @@ function buildRuleRowHtml(docType, rule) {
   const safeDepartment = escapeHtml(rule.department || "");
   const safeKeywords = escapeHtml(formatListInput(rule.keywords || []));
   const safeRequired = escapeHtml(formatListInput(rule.required_fields || []));
+  const safeSlaDays = rule.sla_days === null || rule.sla_days === undefined ? "" : escapeHtml(String(rule.sla_days));
 
   return `
     <tr class="rule-row" data-rule-row="${safeType}">
@@ -198,6 +248,9 @@ function buildRuleRowHtml(docType, rule) {
       </td>
       <td data-label="Keywords">
         <input class="rule-keywords rule-input" value="${safeKeywords}" placeholder="permit, construction, site plan" />
+      </td>
+      <td data-label="SLA Days">
+        <input class="rule-sla-days rule-input" type="number" min="0" value="${safeSlaDays}" placeholder="e.g. 10" />
       </td>
       <td class="rule-actions-cell">
         <button type="button" class="rule-expand-btn" title="Edit required fields" aria-label="Edit required fields">
@@ -225,6 +278,7 @@ function renderRulesBuilder(rules) {
             <th>Document Type</th>
             <th>Route To Department</th>
             <th>Trigger Keywords</th>
+            <th>SLA Days</th>
             <th></th>
           </tr>
         </thead>
@@ -247,6 +301,7 @@ function collectRulesFromBuilder() {
     const departmentInput = row.querySelector(".rule-department");
     const keywordsInput = row.querySelector(".rule-keywords");
     const requiredInput = row.querySelector(".rule-required");
+    const slaDaysInput = row.querySelector(".rule-sla-days");
 
     const docType = normalizeDocTypeKey(docTypeInput.value);
     if (!docType) {
@@ -260,11 +315,14 @@ function collectRulesFromBuilder() {
     const department = String(departmentInput.value || "").trim() || "General Intake";
     const keywords = parseListInput(keywordsInput ? keywordsInput.value : "").map((item) => item.toLowerCase());
     const requiredFields = parseListInput(requiredInput ? requiredInput.value : "");
+    const parsedSlaDays = Number.parseInt(String(slaDaysInput ? slaDaysInput.value : "").trim(), 10);
+    const slaDays = Number.isFinite(parsedSlaDays) && parsedSlaDays >= 0 ? parsedSlaDays : null;
 
     parsed[docType] = {
       keywords,
       department,
       required_fields: requiredFields,
+      sla_days: slaDays,
     };
   });
 
@@ -307,11 +365,14 @@ function coerceRuleSet(candidate) {
       : parseListInput(rawRule.required_fields || "");
 
     const department = String(rawRule.department || "").trim() || "General Intake";
+    const parsedSlaDays = Number.parseInt(String(rawRule.sla_days ?? "").trim(), 10);
+    const slaDays = Number.isFinite(parsedSlaDays) && parsedSlaDays >= 0 ? parsedSlaDays : null;
 
     output[docType] = {
       keywords,
       department,
       required_fields: requiredFields,
+      sla_days: slaDays,
     };
   }
 
@@ -359,6 +420,8 @@ async function promptLogin() {
       }),
     );
     setAuthToken(loginData.access_token);
+    currentUserId = String(loginData.user?.id || "");
+    currentUserEmail = String(loginData.user?.email || "");
     setPlatformStatus(`Signed in as ${loginData.user.email}.`);
     return true;
   } catch (error) {
@@ -403,10 +466,30 @@ function percent(value) {
   return `${Math.round(safe * 100)}%`;
 }
 
+function statusLabel(status) {
+  return String(status || "")
+    .replaceAll("_", " ")
+    .trim();
+}
+
+function isDocumentOverdue(doc) {
+  if (!doc || !doc.due_date || OVERDUE_DONE_STATUSES.has(String(doc.status || ""))) {
+    return false;
+  }
+  const dueDate = new Date(doc.due_date);
+  return !Number.isNaN(dueDate.valueOf()) && dueDate.valueOf() < Date.now();
+}
+
 function statusBadgeClass(doc) {
+  if (isDocumentOverdue(doc)) return "status-badge overdue";
   if (doc.status === "failed") return "status-badge danger";
   if (doc.requires_review) return "status-badge review";
   if (doc.status === "approved" || doc.status === "corrected") return "status-badge approved";
+  if (doc.status === "acknowledged") return "status-badge acknowledged";
+  if (doc.status === "assigned") return "status-badge assigned";
+  if (doc.status === "in_progress") return "status-badge in-progress";
+  if (doc.status === "completed") return "status-badge completed";
+  if (doc.status === "archived") return "status-badge archived";
   if (doc.status === "routed") return "status-badge routed";
   return "status-badge";
 }
@@ -424,6 +507,288 @@ function safeDate(value) {
     return value;
   }
   return date.toLocaleString();
+}
+
+function userLabel(user) {
+  if (!user) return "";
+  const name = String(user.full_name || "").trim();
+  const email = String(user.email || "").trim();
+  return name ? `${name} (${email})` : email;
+}
+
+function userNameById(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return "Unassigned";
+  const user = userCache.find((candidate) => String(candidate.id || "") === id);
+  if (!user) return id;
+  return String(user.full_name || user.email || id);
+}
+
+function setBulkSelectedCountLabel() {
+  if (!bulkSelectedCount) return;
+  bulkSelectedCount.textContent = `${bulkSelected.size} selected`;
+}
+
+function populateAssignOptions() {
+  if (!reviewAssignedTo) return;
+  const selected = reviewAssignedTo.value;
+  const options = ['<option value="">(Unassigned)</option>'];
+  userCache.forEach((user) => {
+    const id = escapeHtml(String(user.id || ""));
+    const label = escapeHtml(userLabel(user));
+    options.push(`<option value="${id}">${label}</option>`);
+  });
+  reviewAssignedTo.innerHTML = options.join("");
+  if (selected && Array.from(reviewAssignedTo.options).some((opt) => opt.value === selected)) {
+    reviewAssignedTo.value = selected;
+  }
+}
+
+async function loadCurrentUser() {
+  try {
+    const me = await parseJSON(await apiFetch("/api/auth/me"));
+    currentUserId = String(me.id || "");
+    currentUserEmail = String(me.email || "");
+    return me;
+  } catch {
+    currentUserId = "";
+    currentUserEmail = "";
+    return null;
+  }
+}
+
+async function loadUsers() {
+  try {
+    const data = await parseJSON(await apiFetch("/api/auth/users?limit=300"));
+    userCache = Array.isArray(data.items) ? data.items : [];
+  } catch {
+    userCache = [];
+  }
+  if (currentUserId && !userCache.some((item) => String(item.id || "") === currentUserId)) {
+    userCache.push({
+      id: currentUserId,
+      email: currentUserEmail || currentUserId,
+      full_name: "",
+    });
+  }
+  populateAssignOptions();
+}
+
+async function loadWatcherStatus() {
+  if (!watcherStatus) return;
+  try {
+    const data = await parseJSON(await apiFetch("/api/watcher/status"));
+    const enabled = Boolean(data.enabled);
+    const dir = data.watch_dir || "(not set)";
+    const count = Number(data.files_ingested || 0);
+    watcherStatus.textContent = enabled
+      ? `Watcher enabled · ${dir} · ${count} file${count === 1 ? "" : "s"} ingested`
+      : `Watcher disabled · ${dir} · ${count} file${count === 1 ? "" : "s"} ingested`;
+    watcherStatus.classList.toggle("enabled", enabled);
+    watcherStatus.classList.toggle("disabled", !enabled);
+  } catch (error) {
+    watcherStatus.textContent = `Watcher status unavailable: ${error.message}`;
+    watcherStatus.classList.remove("enabled", "disabled");
+  }
+}
+
+function setBulkMode(enabled) {
+  bulkMode = Boolean(enabled);
+  if (!bulkMode) {
+    bulkSelected.clear();
+    if (bulkSelectAll) bulkSelectAll.checked = false;
+  }
+  if (bulkToolbar) bulkToolbar.hidden = !bulkMode;
+  if (bulkToggle) bulkToggle.textContent = bulkMode ? "Exit Multi-select" : "Multi-select";
+  setBulkSelectedCountLabel();
+}
+
+function selectedBulkIds() {
+  return Array.from(bulkSelected).filter((id) => documentsCache.some((doc) => doc.id === id));
+}
+
+function setNotificationBadge(count) {
+  if (!notificationBadge) return;
+  const unread = Math.max(0, Number(count || 0));
+  notificationBadge.textContent = unread > 99 ? "99+" : String(unread);
+  notificationBadge.hidden = unread <= 0;
+}
+
+function renderNotificationItems(items) {
+  if (!notificationList) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    notificationList.innerHTML = '<div class="notification-empty">No notifications.</div>';
+    return;
+  }
+  notificationList.innerHTML = list.map((item) => {
+    const safeId = escapeHtml(String(item.id));
+    const title = escapeHtml(item.title || "Notification");
+    const message = escapeHtml(item.message || "");
+    const createdAt = escapeHtml(safeDate(item.created_at || ""));
+    return `<button type="button" class="notification-item${item.is_read ? "" : " unread"}" data-notification-id="${safeId}" data-document-id="${escapeHtml(String(item.document_id || ""))}">
+      <span class="notification-item-title">${title}</span>
+      <span class="notification-item-meta">${message || createdAt}</span>
+    </button>`;
+  }).join("");
+}
+
+async function loadNotifications() {
+  try {
+    const data = await parseJSON(await apiFetch("/api/notifications?limit=30"));
+    setNotificationBadge(data.unread_count || 0);
+    renderNotificationItems(data.items || []);
+  } catch {
+    renderNotificationItems([]);
+  }
+}
+
+async function markAllNotificationsAsRead() {
+  await parseJSON(await apiFetch("/api/notifications/read-all", { method: "POST" }));
+  await loadNotifications();
+}
+
+async function markNotificationAsRead(notificationId) {
+  await parseJSON(await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" }));
+  await loadNotifications();
+}
+
+function startNotificationPolling() {
+  if (notificationsPollHandle) {
+    window.clearInterval(notificationsPollHandle);
+  }
+  notificationsPollHandle = window.setInterval(() => {
+    loadNotifications().catch(() => {});
+  }, 30000);
+}
+
+function openResponseModal() {
+  if (!responseModal) return;
+  responseModal.hidden = false;
+}
+
+function closeResponseModal() {
+  if (!responseModal) return;
+  responseModal.hidden = true;
+}
+
+async function renderTemplatePreview(templateId, documentId) {
+  if (!responseRenderedPreview) return;
+  if (!templateId || !documentId) {
+    responseRenderedPreview.textContent = "Select a template.";
+    return;
+  }
+  try {
+    const data = await parseJSON(await apiFetch(`/api/templates/${templateId}/render/${documentId}`, { method: "POST" }));
+    responseRenderedPreview.textContent = data.rendered || "";
+  } catch (error) {
+    responseRenderedPreview.textContent = `Template render failed: ${error.message}`;
+  }
+}
+
+async function openResponseComposer(documentId) {
+  if (!responseTemplateSelect || !responseRenderedPreview) return;
+  openResponseModal();
+  responseRenderedPreview.textContent = "Loading templates...";
+  try {
+    const data = await parseJSON(await apiFetch("/api/templates?limit=200"));
+    templateCache = Array.isArray(data.items) ? data.items : [];
+    if (!templateCache.length) {
+      responseTemplateSelect.innerHTML = "";
+      responseRenderedPreview.textContent = "No templates available.";
+      return;
+    }
+    responseTemplateSelect.innerHTML = templateCache
+      .map((template) => `<option value="${escapeHtml(String(template.id))}">${escapeHtml(template.name)}</option>`)
+      .join("");
+    responseTemplateSelect.dataset.documentId = documentId;
+    await renderTemplatePreview(String(templateCache[0].id), documentId);
+  } catch (error) {
+    responseRenderedPreview.textContent = `Failed to load templates: ${error.message}`;
+  }
+}
+
+async function assignDocumentToUser(documentId, userId) {
+  const payload = {
+    user_id: userId,
+    actor: "dashboard_reviewer",
+  };
+  const updated = await parseJSON(
+    await apiFetch(`/api/documents/${documentId}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  );
+  const audit = await parseJSON(await apiFetch(`/api/documents/${documentId}/audit?limit=30`));
+  renderReviewDocument(updated, audit.items || []);
+  await loadAll();
+}
+
+async function transitionDocumentTo(documentId, targetStatus) {
+  const payload = {
+    status: targetStatus,
+    actor: "dashboard_reviewer",
+  };
+  const updated = await parseJSON(
+    await apiFetch(`/api/documents/${documentId}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  );
+  const audit = await parseJSON(await apiFetch(`/api/documents/${documentId}/audit?limit=30`));
+  renderReviewDocument(updated, audit.items || []);
+  await loadAll();
+}
+
+async function runBulkAction(action, params = {}) {
+  const documentIds = selectedBulkIds();
+  if (!documentIds.length) {
+    throw new Error("Select at least one document.");
+  }
+  return parseJSON(
+    await apiFetch("/api/documents/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        document_ids: documentIds,
+        params,
+        actor: "dashboard_reviewer",
+      }),
+    }),
+  );
+}
+
+function exportSelectedDocumentsCsv() {
+  const selectedIds = selectedBulkIds();
+  const selectedDocs = documentsCache.filter((doc) => selectedIds.includes(doc.id));
+  if (!selectedDocs.length) {
+    throw new Error("Select at least one document.");
+  }
+  const header = ["id", "filename", "status", "doc_type", "department", "assigned_to", "due_date"];
+  const rows = selectedDocs.map((doc) => [
+    doc.id,
+    doc.filename,
+    doc.status,
+    doc.doc_type || "",
+    doc.department || "",
+    doc.assigned_to || "",
+    doc.due_date || "",
+  ]);
+  const csv = [header, ...rows]
+    .map((row) => row.map((value) => `"${String(value || "").replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `citysort-bulk-${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function formatUpdatedAt(dateValue = new Date()) {
@@ -569,18 +934,44 @@ function populateDocTypeOptions(rules) {
   }
 }
 
+function renderTransitionButtons(doc) {
+  if (!transitionActions) return;
+  const allowedTransitions = TRANSITIONS[String(doc.status || "")] || [];
+  if (!allowedTransitions.length) {
+    transitionActions.innerHTML = "";
+    return;
+  }
+  transitionActions.innerHTML = allowedTransitions.map((status) => (
+    `<button type="button" class="secondary transition-btn" data-transition-status="${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</button>`
+  )).join("");
+}
+
 function renderReviewDocument(doc, auditItems) {
   selectedDocumentId = doc.id;
   reviewId.value = doc.id;
   reviewDocType.value = "";
   reviewDepartment.value = doc.department || "";
+  if (reviewAssignedTo) {
+    const assignedTo = String(doc.assigned_to || "");
+    if (assignedTo && !Array.from(reviewAssignedTo.options).some((option) => option.value === assignedTo)) {
+      const option = document.createElement("option");
+      option.value = assignedTo;
+      option.textContent = userNameById(assignedTo);
+      reviewAssignedTo.appendChild(option);
+    }
+    reviewAssignedTo.value = assignedTo;
+    reviewAssignedTo.dataset.documentId = doc.id;
+  }
   reviewNotes.value = doc.reviewer_notes || "";
 
   const defaultFields = doc.extracted_fields && typeof doc.extracted_fields === "object" ? doc.extracted_fields : {};
   reviewFieldsJson.value = JSON.stringify(defaultFields, null, 2);
 
   // Detail header
-  const statusText = doc.status + (doc.requires_review ? " (review)" : "");
+  const overdue = isDocumentOverdue(doc);
+  const statusText = overdue
+    ? `${statusLabel(doc.status)} (overdue)`
+    : `${statusLabel(doc.status)}${doc.requires_review ? " (review)" : ""}`;
   const confidenceVal = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
   const confidencePct = Math.round(confidenceVal * 100);
 
@@ -591,6 +982,11 @@ function renderReviewDocument(doc, auditItems) {
   reviewBadgeDept.textContent = doc.department || "-";
   reviewConfBar.style.width = confidencePct + "%";
   reviewConfPct.textContent = confidencePct + "%";
+  if (reviewDueDate) {
+    reviewDueDate.textContent = doc.due_date ? `Due: ${safeDate(doc.due_date)}` : "Due: -";
+    reviewDueDate.classList.toggle("overdue", overdue);
+  }
+  renderTransitionButtons(doc);
 
   // Progressive disclosure: issues
   const hasMissing = doc.missing_fields && doc.missing_fields.length > 0;
@@ -642,6 +1038,17 @@ function clearReviewSelection(message) {
   if (docReuploadStatus) docReuploadStatus.textContent = "";
   if (docFieldsStatus) docFieldsStatus.textContent = "";
   if (docFieldsSave) docFieldsSave.disabled = true;
+  if (reviewAssignedTo) {
+    reviewAssignedTo.value = "";
+    reviewAssignedTo.dataset.documentId = "";
+  }
+  if (reviewDueDate) {
+    reviewDueDate.textContent = "Due: -";
+    reviewDueDate.classList.remove("overdue");
+  }
+  if (transitionActions) {
+    transitionActions.innerHTML = "";
+  }
   switchDetailTab("review");
 
   hideReviewDetail();
@@ -656,7 +1063,7 @@ function connectivitySummary(data) {
   return `DB: ${db}, OCR: ${ocr}, Classifier: ${classifier}, Deploy: ${deploy}`;
 }
 
-var prevMetrics = { total: null, review: null, routed: null, confidence: null };
+var prevMetrics = { total: null, review: null, overdue: null, routed: null, confidence: null };
 
 function updateMetric(id, newVal, prevVal, barId, barPct, trendId) {
   var el = document.getElementById(id);
@@ -679,22 +1086,26 @@ async function loadAnalytics() {
   const data = await parseJSON(await apiFetch("/api/analytics"));
   var total = data.total_documents || 0;
   var review = data.needs_review || 0;
+  var overdue = data.overdue || 0;
   var routed = data.routed_or_approved || 0;
   var conf = data.average_confidence || 0;
 
   setText("metric-total", String(total));
   setText("metric-review", String(review));
+  setText("metric-overdue", String(overdue));
   setText("metric-routed", String(routed));
   setText("metric-confidence", percent(conf));
 
   var maxDoc = Math.max(total, 1);
   updateMetric("metric-total", total, prevMetrics.total, "metric-total-bar", 100, "metric-total-trend");
   updateMetric("metric-review", review, prevMetrics.review, "metric-review-bar", (review / maxDoc) * 100, "metric-review-trend");
+  updateMetric("metric-overdue", overdue, prevMetrics.overdue, "metric-overdue-bar", (overdue / maxDoc) * 100, "metric-overdue-trend");
   updateMetric("metric-routed", routed, prevMetrics.routed, "metric-routed-bar", (routed / maxDoc) * 100, "metric-routed-trend");
   updateMetric("metric-confidence", Math.round(conf * 100), prevMetrics.confidence, "metric-confidence-bar", conf * 100, "metric-confidence-trend");
 
   prevMetrics.total = total;
   prevMetrics.review = review;
+  prevMetrics.overdue = overdue;
   prevMetrics.routed = routed;
   prevMetrics.confidence = Math.round(conf * 100);
 }
@@ -754,6 +1165,10 @@ async function loadDocuments() {
     params.set("department", activeDepartmentFilter);
   }
 
+  if (myDocsChip && myDocsChip.classList.contains("active") && currentUserId) {
+    params.set("assigned_to", currentUserId);
+  }
+
   const listResponsePromise = apiFetch(`/api/documents?${params.toString()}`);
   const summaryResponsePromise = reviewSummaryBody ? apiFetch("/api/documents?limit=200") : null;
 
@@ -770,10 +1185,22 @@ async function loadDocuments() {
   if (search) {
     items = items.filter((doc) => doc.filename.toLowerCase().includes(search));
   }
+  documentsCache = items.slice();
 
   // Update count
   if (reviewListCount) {
     reviewListCount.textContent = `${items.length} document${items.length !== 1 ? "s" : ""}`;
+  }
+
+  const itemIdSet = new Set(items.map((doc) => doc.id));
+  Array.from(bulkSelected).forEach((docId) => {
+    if (!itemIdSet.has(docId)) {
+      bulkSelected.delete(docId);
+    }
+  });
+  setBulkSelectedCountLabel();
+  if (bulkSelectAll) {
+    bulkSelectAll.checked = items.length > 0 && items.every((doc) => bulkSelected.has(doc.id));
   }
 
   if (selectedDocumentId && !items.some((doc) => doc.id === selectedDocumentId)) {
@@ -790,7 +1217,10 @@ async function loadDocuments() {
     // Render document cards in left pane
     if (reviewListScroll) {
       reviewListScroll.innerHTML = items.map((doc) => {
-        const statusText = doc.requires_review ? `${doc.status} (review)` : doc.status;
+        const overdue = isDocumentOverdue(doc);
+        const statusText = overdue
+          ? `${statusLabel(doc.status)} (overdue)`
+          : `${statusLabel(doc.status)}${doc.requires_review ? " (review)" : ""}`;
         const confidenceValue = Math.max(0, Math.min(Number(doc.confidence || 0), 1));
         const confidencePct = Math.round(confidenceValue * 100);
         const safeDocId = escapeHtml(doc.id);
@@ -798,14 +1228,27 @@ async function loadDocuments() {
         const safeDocType = escapeHtml(doc.doc_type || "unclassified");
         const safeDepartment = escapeHtml(doc.department || "-");
         const safeStatusText = escapeHtml(statusText);
+        const assigneeLabel = escapeHtml(userNameById(doc.assigned_to));
+        const dueText = doc.due_date ? safeDate(doc.due_date) : "";
+        const checkbox = bulkMode
+          ? `<input type="checkbox" class="bulk-item-check" data-bulk-doc-id="${safeDocId}" ${bulkSelected.has(doc.id) ? "checked" : ""} />`
+          : "";
+        const overdueText = overdue ? '<span class="doc-card-overdue">OVERDUE</span>' : "";
+        const dueLabel = dueText
+          ? `<span class="${overdue ? "doc-card-overdue" : "doc-card-due"}">Due ${escapeHtml(dueText)}</span>`
+          : "";
         return `<div class="doc-card${doc.id === selectedDocumentId ? " is-selected" : ""}" data-doc-id="${safeDocId}">
           <div class="doc-card-top">
+            ${checkbox}
             <span class="doc-card-name">${safeFilename}</span>
             <span class="${statusBadgeClass(doc)}">${safeStatusText}</span>
           </div>
           <div class="doc-card-bottom">
             <span class="pill">${safeDocType}</span>
             <span class="doc-card-dept">${safeDepartment}</span>
+            <span class="doc-card-assignee">${assigneeLabel}</span>
+            ${overdueText}
+            ${dueLabel}
             <span class="doc-card-conf">${confidencePct}% <span class="confidence-track"><span style="width:${confidencePct}%"></span></span></span>
           </div>
         </div>`;
@@ -822,10 +1265,11 @@ async function loadDocuments() {
     } else {
       reviewSummaryBody.innerHTML = needsReview.map((doc) => {
         const safeId = escapeHtml(doc.id);
+        const summaryStatus = isDocumentOverdue(doc) ? "overdue" : String(doc.status || "");
         return `<div class="review-summary-row" data-doc-id="${safeId}">
           <span class="review-summary-name">${escapeHtml(doc.filename)}</span>
           <span class="pill">${escapeHtml(doc.doc_type || "-")}</span>
-          <span class="${statusBadgeClass(doc)}">${escapeHtml(doc.status)}</span>
+          <span class="${statusBadgeClass(doc)}">${escapeHtml(statusLabel(summaryStatus))}</span>
         </div>`;
       }).join("");
     }
@@ -914,6 +1358,7 @@ function addNewRuleType() {
     keywords: [],
     department: "General Intake",
     required_fields: ["applicant_name", "date"],
+    sla_days: null,
   };
 
   activeRules = ensureOtherRule(current);
@@ -931,7 +1376,7 @@ function addNewRuleType() {
 }
 
 function showMetricsSkeleton() {
-  ["metric-total", "metric-review", "metric-routed", "metric-confidence"].forEach(function (id) {
+  ["metric-total", "metric-review", "metric-overdue", "metric-routed", "metric-confidence"].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.innerHTML = '<span class="skeleton skeleton-number"></span>';
   });
@@ -961,7 +1406,7 @@ async function loadAll() {
     }
     reviewListScroll.innerHTML = skeletonHtml;
   }
-  await Promise.all([loadAnalytics(), loadQueues(), loadDocuments()]);
+  await Promise.all([loadAnalytics(), loadQueues(), loadDocuments(), loadWatcherStatus()]);
   if (lastUpdated) {
     lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
   }
@@ -983,6 +1428,22 @@ function bindDocumentClicks() {
   // Document cards in left pane
   if (reviewListScroll) {
     reviewListScroll.addEventListener("click", async (event) => {
+      const checkbox = event.target.closest(".bulk-item-check");
+      if (checkbox) {
+        const docId = checkbox.dataset.bulkDocId;
+        if (docId) {
+          if (checkbox.checked) {
+            bulkSelected.add(docId);
+          } else {
+            bulkSelected.delete(docId);
+          }
+          setBulkSelectedCountLabel();
+          if (bulkSelectAll) {
+            bulkSelectAll.checked = documentsCache.length > 0 && documentsCache.every((doc) => bulkSelected.has(doc.id));
+          }
+        }
+        return;
+      }
       const card = event.target.closest(".doc-card");
       if (!card) return;
       const docId = card.dataset.docId;
@@ -1033,6 +1494,16 @@ function bindFilters() {
 
   if (filterStatus) filterStatus.addEventListener("change", trigger);
   if (filterSearch) filterSearch.addEventListener("input", debouncedTrigger);
+  if (myDocsChip) {
+    myDocsChip.addEventListener("click", () => {
+      if (!currentUserId) {
+        showToast("Sign in required to use My Documents.", "warning");
+        return;
+      }
+      myDocsChip.classList.toggle("active");
+      trigger();
+    });
+  }
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1461,7 +1932,7 @@ function bindRulesActions() {
       const editorRow = document.createElement("tr");
       editorRow.className = "rule-required-editor";
       editorRow.innerHTML = `
-        <td colspan="4">
+        <td colspan="5">
           <label>Required Fields (comma-separated)</label>
           <input class="rule-required-inline rule-input" value="${escapeHtml(currentValue)}" placeholder="applicant_name, date" />
         </td>
@@ -1590,6 +2061,203 @@ function bindDocumentTab() {
         showToast("Save failed: " + error.message, "error");
       } finally {
         setButtonBusy(docFieldsSave, "Saving\u2026", false);
+      }
+    });
+  }
+}
+
+function bindAdvancedActions() {
+  if (transitionActions) {
+    transitionActions.addEventListener("click", async (event) => {
+      const button = event.target.closest(".transition-btn");
+      if (!button || !reviewId.value) return;
+      const targetStatus = String(button.dataset.transitionStatus || "").trim();
+      if (!targetStatus) return;
+      setButtonBusy(button, "Transitioning...", true);
+      try {
+        await transitionDocumentTo(reviewId.value, targetStatus);
+        reviewStatus.textContent = `Transitioned to ${statusLabel(targetStatus)}.`;
+        showToast(`Transitioned to ${statusLabel(targetStatus)}`, "success");
+      } catch (error) {
+        reviewStatus.textContent = `Transition failed: ${error.message}`;
+        showToast(`Transition failed: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, "Transitioning...", false);
+      }
+    });
+  }
+
+  if (reviewAssignedTo) {
+    reviewAssignedTo.addEventListener("change", async () => {
+      if (!reviewId.value) return;
+      const userId = String(reviewAssignedTo.value || "").trim();
+      if (!userId) {
+        showToast("Select a user to assign this document.", "warning");
+        return;
+      }
+      try {
+        await assignDocumentToUser(reviewId.value, userId);
+        reviewStatus.textContent = `Assigned to ${userNameById(userId)}.`;
+        showToast(`Assigned to ${userNameById(userId)}`, "success");
+      } catch (error) {
+        reviewStatus.textContent = `Assignment failed: ${error.message}`;
+        showToast(`Assignment failed: ${error.message}`, "error");
+      }
+    });
+  }
+
+  if (respondButton) {
+    respondButton.addEventListener("click", async () => {
+      if (!reviewId.value) {
+        showToast("Select a document first.", "warning");
+        return;
+      }
+      await openResponseComposer(reviewId.value);
+    });
+  }
+
+  if (responseTemplateSelect) {
+    responseTemplateSelect.addEventListener("change", async () => {
+      const templateId = responseTemplateSelect.value;
+      const documentId = responseTemplateSelect.dataset.documentId || reviewId.value;
+      await renderTemplatePreview(templateId, documentId);
+    });
+  }
+
+  if (responseCopyBtn) {
+    responseCopyBtn.addEventListener("click", async () => {
+      if (!responseRenderedPreview) return;
+      try {
+        await navigator.clipboard.writeText(responseRenderedPreview.textContent || "");
+        showToast("Rendered response copied.", "success");
+      } catch {
+        showToast("Clipboard copy failed.", "error");
+      }
+    });
+  }
+
+  if (responseModalClose) {
+    responseModalClose.addEventListener("click", closeResponseModal);
+  }
+  if (responseCancelBtn) {
+    responseCancelBtn.addEventListener("click", closeResponseModal);
+  }
+  if (responseModal) {
+    responseModal.addEventListener("click", (event) => {
+      if (event.target === responseModal) {
+        closeResponseModal();
+      }
+    });
+  }
+
+  if (notificationBell) {
+    notificationBell.addEventListener("click", async () => {
+      const open = notificationPanel && !notificationPanel.hidden;
+      if (notificationPanel) notificationPanel.hidden = open;
+      if (!open) {
+        await loadNotifications();
+      }
+    });
+  }
+
+  if (notificationsMarkAll) {
+    notificationsMarkAll.addEventListener("click", async () => {
+      try {
+        await markAllNotificationsAsRead();
+      } catch (error) {
+        showToast(`Unable to mark notifications: ${error.message}`, "error");
+      }
+    });
+  }
+
+  if (notificationList) {
+    notificationList.addEventListener("click", async (event) => {
+      const item = event.target.closest(".notification-item");
+      if (!item) return;
+      const notificationId = item.dataset.notificationId;
+      const documentId = item.dataset.documentId;
+      try {
+        await markNotificationAsRead(notificationId);
+      } catch {
+        // Continue navigation even if mark-read fails.
+      }
+      if (notificationPanel) notificationPanel.hidden = true;
+      if (documentId) {
+        window.location.href = `/?page=queues&doc=${encodeURIComponent(documentId)}`;
+      }
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!notificationPanel || notificationPanel.hidden) return;
+    if (notificationPanel.contains(event.target) || (notificationBell && notificationBell.contains(event.target))) {
+      return;
+    }
+    notificationPanel.hidden = true;
+  });
+
+  if (bulkToggle) {
+    bulkToggle.addEventListener("click", async () => {
+      setBulkMode(!bulkMode);
+      await loadDocuments();
+    });
+  }
+
+  if (bulkCancelBtn) {
+    bulkCancelBtn.addEventListener("click", async () => {
+      setBulkMode(false);
+      await loadDocuments();
+    });
+  }
+
+  if (bulkSelectAll) {
+    bulkSelectAll.addEventListener("change", async () => {
+      if (!bulkMode) return;
+      if (bulkSelectAll.checked) {
+        documentsCache.forEach((doc) => bulkSelected.add(doc.id));
+      } else {
+        documentsCache.forEach((doc) => bulkSelected.delete(doc.id));
+      }
+      setBulkSelectedCountLabel();
+      await loadDocuments();
+    });
+  }
+
+  if (bulkApproveBtn) {
+    bulkApproveBtn.addEventListener("click", async () => {
+      if (!window.confirm("Approve all selected documents?")) return;
+      try {
+        const result = await runBulkAction("approve");
+        showToast(`Bulk approve complete (${result.success_count} success, ${result.error_count} errors).`, "success");
+        await loadAll();
+      } catch (error) {
+        showToast(`Bulk approve failed: ${error.message}`, "error");
+      }
+    });
+  }
+
+  if (bulkAssignBtn) {
+    bulkAssignBtn.addEventListener("click", async () => {
+      const defaultTarget = currentUserId || "";
+      const userId = window.prompt("Assign selected docs to user ID:", defaultTarget);
+      if (!userId) return;
+      try {
+        const result = await runBulkAction("assign", { user_id: userId.trim() });
+        showToast(`Bulk assign complete (${result.success_count} success, ${result.error_count} errors).`, "success");
+        await loadAll();
+      } catch (error) {
+        showToast(`Bulk assign failed: ${error.message}`, "error");
+      }
+    });
+  }
+
+  if (bulkExportBtn) {
+    bulkExportBtn.addEventListener("click", () => {
+      try {
+        exportSelectedDocumentsCsv();
+        showToast("CSV export created.", "success");
+      } catch (error) {
+        showToast(`CSV export failed: ${error.message}`, "error");
       }
     });
   }
@@ -1864,7 +2532,7 @@ reprocessButton.addEventListener("click", async () => {
 refreshButton.addEventListener("click", async () => {
   setButtonBusy(refreshButton, "Refreshing...", true);
   try {
-    await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]);
+    await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary(), loadUsers(), loadNotifications()]);
 
     if (selectedDocumentId) {
       try {
@@ -1949,6 +2617,24 @@ if (themeToggle) {
   });
 }
 
+// ── Sidebar collapse toggle ─────────────────────────
+var sidebarToggle = document.getElementById("sidebar-toggle");
+if (sidebarToggle) {
+  var SIDEBAR_KEY = "citysort_sidebar";
+  var appShell = document.querySelector(".app-shell");
+  // Restore saved state
+  if (localStorage.getItem(SIDEBAR_KEY) === "collapsed") {
+    appShell.classList.add("sidebar-collapsed");
+  }
+  sidebarToggle.addEventListener("click", function () {
+    appShell.classList.toggle("sidebar-collapsed");
+    localStorage.setItem(
+      SIDEBAR_KEY,
+      appShell.classList.contains("sidebar-collapsed") ? "collapsed" : "expanded"
+    );
+  });
+}
+
 bindFilters();
 bindDocumentClicks();
 bindConnectors();
@@ -1956,9 +2642,16 @@ bindRulesActions();
 bindPlatformActions();
 bindDetailTabs();
 bindDocumentTab();
+bindAdvancedActions();
 clearReviewSelection();
+setBulkMode(false);
 
-Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]).then(async () => {
+(async () => {
+  await loadCurrentUser();
+  await loadUsers();
+  await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary(), loadNotifications()]);
+  startNotificationPolling();
+
   // Deep-link: auto-select a document if ?doc=ID is present
   const docParam = new URLSearchParams(window.location.search).get("doc");
   if (docParam) {
@@ -1976,6 +2669,6 @@ Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary()]).then(async ()
       // Ignore deep-link preload errors; dashboard remains usable.
     }
   }
-}).catch((error) => {
+})().catch((error) => {
   uploadStatus.textContent = `Failed to load dashboard: ${error.message}`;
 });
