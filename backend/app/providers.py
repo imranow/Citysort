@@ -317,7 +317,9 @@ def _classify_with_anthropic(
             payload=payload,
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+        import logging
+        logging.getLogger(__name__).error("Anthropic API call failed: %s", exc)
         return None
 
     content_blocks = response_body.get("content", [])

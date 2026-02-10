@@ -1,10 +1,13 @@
 """Response template CRUD and rendering."""
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from .db import get_connection
 from .repository import get_document, utcnow_iso
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def create_template(
@@ -77,34 +80,71 @@ def delete_template(template_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def _document_context(document: dict[str, Any]) -> dict[str, str]:
+    replacements: dict[str, str] = {
+        "id": str(document.get("id", "")),
+        "filename": str(document.get("filename", "")),
+        "doc_type": str(document.get("doc_type", "")),
+        "department": str(document.get("department", "")),
+        "status": str(document.get("status", "")),
+        "urgency": str(document.get("urgency", "")),
+    }
+    fields = document.get("extracted_fields", {})
+    if isinstance(fields, dict):
+        for key, value in fields.items():
+            replacements[key] = str(value) if value is not None else ""
+    return replacements
+
+
+def _resolve_recipient_email(document: dict[str, Any]) -> Optional[str]:
+    fields = document.get("extracted_fields", {})
+    if not isinstance(fields, dict):
+        return None
+    for candidate_key in ("applicant_email", "contact_email", "sender_email", "email"):
+        value = fields.get(candidate_key)
+        if value is None:
+            continue
+        email = str(value).strip()
+        if EMAIL_RE.match(email):
+            return email
+    return None
+
+
+def _render_body(template_body: str, context: dict[str, str]) -> str:
+    body = template_body
+    for key, value in context.items():
+        body = body.replace(f"{{{{{key}}}}}", value)
+    return body
+
+
 def render_template(template_id: int, document_id: str) -> str:
     template = get_template(template_id)
     if not template:
         raise ValueError("Template not found")
-    doc = get_document(document_id)
-    if not doc:
+    document = get_document(document_id)
+    if not document:
+        raise ValueError("Document not found")
+    context = _document_context(document)
+    return _render_body(template["template_body"], context)
+
+
+def compose_template_email(template_id: int, document_id: str) -> dict[str, Any]:
+    template = get_template(template_id)
+    if not template:
+        raise ValueError("Template not found")
+    document = get_document(document_id)
+    if not document:
         raise ValueError("Document not found")
 
-    body = template["template_body"]
-
-    # Core document fields.
-    replacements: dict[str, str] = {
-        "id": doc.get("id", ""),
-        "filename": doc.get("filename", ""),
-        "doc_type": doc.get("doc_type", ""),
-        "department": doc.get("department", ""),
-        "status": doc.get("status", ""),
-        "urgency": doc.get("urgency", ""),
+    context = _document_context(document)
+    body = _render_body(template["template_body"], context)
+    recipient = _resolve_recipient_email(document)
+    subject = f"{template['name']} - {context.get('filename', '').strip() or 'CitySort Update'}"
+    return {
+        "template_id": int(template["id"]),
+        "template_name": str(template["name"]),
+        "document_id": str(document_id),
+        "to_email": recipient,
+        "subject": subject,
+        "body": body,
     }
-
-    # Add all extracted fields.
-    fields = doc.get("extracted_fields", {})
-    if isinstance(fields, dict):
-        for key, value in fields.items():
-            replacements[key] = str(value) if value is not None else ""
-
-    # Replace {{key}} placeholders.
-    for key, value in replacements.items():
-        body = body.replace(f"{{{{{key}}}}}", value)
-
-    return body

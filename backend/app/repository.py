@@ -802,6 +802,70 @@ def list_assigned_to(user_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
     return [_deserialize_row(row) for row in rows]
 
 
+def create_outbound_email(
+    *,
+    document_id: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    status: str = "pending",
+    provider: str = "smtp",
+    error: Optional[str] = None,
+    sent_at: Optional[str] = None,
+) -> dict[str, Any]:
+    created_at = utcnow_iso()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO outbound_emails (document_id, to_email, subject, body, status, provider, error, created_at, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (document_id, to_email, subject, body, status, provider, error, created_at, sent_at),
+        )
+        row = connection.execute(
+            "SELECT * FROM outbound_emails WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return dict(row)
+
+
+def update_outbound_email(
+    email_id: int,
+    *,
+    status: Optional[str] = None,
+    error: Optional[str] = None,
+    sent_at: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    updates: dict[str, Any] = {}
+    if status is not None:
+        updates["status"] = status
+    if error is not None:
+        updates["error"] = error
+    if sent_at is not None:
+        updates["sent_at"] = sent_at
+
+    if not updates:
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM outbound_emails WHERE id = ?",
+                (email_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    assignments = ", ".join(f"{key} = ?" for key in updates)
+    values = list(updates.values()) + [email_id]
+    with get_connection() as connection:
+        connection.execute(
+            f"UPDATE outbound_emails SET {assignments} WHERE id = ?",
+            values,
+        )
+        row = connection.execute(
+            "SELECT * FROM outbound_emails WHERE id = ?",
+            (email_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def _deserialize_job(row: Any) -> dict[str, Any]:
     if row is None:
         return {}

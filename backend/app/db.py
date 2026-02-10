@@ -262,6 +262,29 @@ def init_db() -> None:
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS outbound_emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL,
+                to_email TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                provider TEXT NOT NULL DEFAULT 'smtp',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                sent_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_outbound_emails_document_created
+            ON outbound_emails (document_id, created_at DESC)
+            """
+        )
+
         # Seed default templates if table is empty.
         template_count = connection.execute("SELECT COUNT(*) AS c FROM templates").fetchone()["c"]
         if template_count == 0:

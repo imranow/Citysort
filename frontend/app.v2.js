@@ -103,8 +103,12 @@ const responseModal = document.getElementById("response-modal");
 const responseModalClose = document.getElementById("response-modal-close");
 const responseCancelBtn = document.getElementById("response-cancel-btn");
 const responseTemplateSelect = document.getElementById("response-template-select");
-const responseRenderedPreview = document.getElementById("response-rendered-preview");
+const responseToEmail = document.getElementById("response-to-email");
+const responseSubjectInput = document.getElementById("response-subject-input");
+const responseBodyInput = document.getElementById("response-body-input");
+const responseSendStatus = document.getElementById("response-send-status");
 const responseCopyBtn = document.getElementById("response-copy-btn");
+const responseSendBtn = document.getElementById("response-send-btn");
 const AUTH_TOKEN_KEY = "citysort_access_token";
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
@@ -665,46 +669,124 @@ function startNotificationPolling() {
 function openResponseModal() {
   if (!responseModal) return;
   responseModal.hidden = false;
+  setResponseSendStatus("", false);
 }
 
 function closeResponseModal() {
   if (!responseModal) return;
   responseModal.hidden = true;
+  if (responseSendBtn) responseSendBtn.disabled = false;
+  setResponseSendStatus("", false);
 }
 
-async function renderTemplatePreview(templateId, documentId) {
-  if (!responseRenderedPreview) return;
+function setResponseSendStatus(message, isError) {
+  if (!responseSendStatus) return;
+  responseSendStatus.textContent = message || "";
+  responseSendStatus.classList.toggle("flag-error", Boolean(isError) && Boolean(message));
+}
+
+async function composeTemplateDraft(templateId, documentId) {
+  if (!responseBodyInput || !responseToEmail || !responseSubjectInput) return;
   if (!templateId || !documentId) {
-    responseRenderedPreview.textContent = "Select a template.";
+    responseToEmail.value = "";
+    responseSubjectInput.value = "";
+    responseBodyInput.value = "";
     return;
   }
   try {
-    const data = await parseJSON(await apiFetch(`/api/templates/${templateId}/render/${documentId}`, { method: "POST" }));
-    responseRenderedPreview.textContent = data.rendered || "";
+    const data = await parseJSON(await apiFetch(`/api/templates/${templateId}/compose/${documentId}`, { method: "POST" }));
+    responseToEmail.value = data.to_email || "";
+    responseSubjectInput.value = data.subject || "";
+    responseBodyInput.value = data.body || "";
+    setResponseSendStatus("", false);
   } catch (error) {
-    responseRenderedPreview.textContent = `Template render failed: ${error.message}`;
+    responseBodyInput.value = "";
+    setResponseSendStatus(`Template compose failed: ${error.message}`, true);
+  }
+}
+
+async function sendResponseEmail(documentId) {
+  if (!documentId || !responseToEmail || !responseSubjectInput || !responseBodyInput) return;
+  const toEmail = String(responseToEmail.value || "").trim();
+  const subject = String(responseSubjectInput.value || "").trim();
+  const body = String(responseBodyInput.value || "").trim();
+
+  if (!toEmail) {
+    setResponseSendStatus("Recipient email is required.", true);
+    return;
+  }
+  if (!subject) {
+    setResponseSendStatus("Email subject is required.", true);
+    return;
+  }
+  if (!body) {
+    setResponseSendStatus("Message body is required.", true);
+    return;
+  }
+
+  if (responseSendBtn) responseSendBtn.disabled = true;
+  setResponseSendStatus("Sending email...", false);
+  try {
+    const data = await parseJSON(
+      await apiFetch(`/api/documents/${documentId}/send-response`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to_email: toEmail,
+          subject,
+          body,
+          actor: "dashboard_reviewer",
+        }),
+      }),
+    );
+    if (data.status !== "sent") {
+      setResponseSendStatus(`Email was not sent: ${data.error || data.status || "unknown error"}.`, true);
+      showToast(`Email was not sent: ${data.error || "unknown error"}`, "error");
+      return;
+    }
+    setResponseSendStatus(`Sent to ${toEmail}.`, false);
+    showToast(`Response email sent to ${toEmail}`, "success");
+    closeResponseModal();
+    if (reviewId.value === documentId) {
+      const [doc, audit] = await Promise.all([
+        parseJSON(await apiFetch(`/api/documents/${documentId}`)),
+        parseJSON(await apiFetch(`/api/documents/${documentId}/audit?limit=30`)),
+      ]);
+      renderReviewDocument(doc, audit.items || []);
+    }
+    loadNotifications().catch(() => {});
+  } catch (error) {
+    setResponseSendStatus(`Send failed: ${error.message}`, true);
+    showToast(`Send failed: ${error.message}`, "error");
+  } finally {
+    if (responseSendBtn) responseSendBtn.disabled = false;
   }
 }
 
 async function openResponseComposer(documentId) {
-  if (!responseTemplateSelect || !responseRenderedPreview) return;
+  if (!responseTemplateSelect || !responseBodyInput || !responseToEmail || !responseSubjectInput) return;
   openResponseModal();
-  responseRenderedPreview.textContent = "Loading templates...";
+  setResponseSendStatus("", false);
+  responseToEmail.value = "";
+  responseSubjectInput.value = "";
+  responseBodyInput.value = "Loading templates...";
   try {
     const data = await parseJSON(await apiFetch("/api/templates?limit=200"));
     templateCache = Array.isArray(data.items) ? data.items : [];
     if (!templateCache.length) {
       responseTemplateSelect.innerHTML = "";
-      responseRenderedPreview.textContent = "No templates available.";
+      responseBodyInput.value = "";
+      setResponseSendStatus("No templates available.", true);
       return;
     }
     responseTemplateSelect.innerHTML = templateCache
       .map((template) => `<option value="${escapeHtml(String(template.id))}">${escapeHtml(template.name)}</option>`)
       .join("");
     responseTemplateSelect.dataset.documentId = documentId;
-    await renderTemplatePreview(String(templateCache[0].id), documentId);
+    await composeTemplateDraft(String(templateCache[0].id), documentId);
   } catch (error) {
-    responseRenderedPreview.textContent = `Failed to load templates: ${error.message}`;
+    responseBodyInput.value = "";
+    setResponseSendStatus(`Failed to load templates: ${error.message}`, true);
   }
 }
 
@@ -2120,19 +2202,30 @@ function bindAdvancedActions() {
     responseTemplateSelect.addEventListener("change", async () => {
       const templateId = responseTemplateSelect.value;
       const documentId = responseTemplateSelect.dataset.documentId || reviewId.value;
-      await renderTemplatePreview(templateId, documentId);
+      await composeTemplateDraft(templateId, documentId);
     });
   }
 
   if (responseCopyBtn) {
     responseCopyBtn.addEventListener("click", async () => {
-      if (!responseRenderedPreview) return;
+      if (!responseBodyInput) return;
       try {
-        await navigator.clipboard.writeText(responseRenderedPreview.textContent || "");
-        showToast("Rendered response copied.", "success");
+        await navigator.clipboard.writeText(responseBodyInput.value || "");
+        showToast("Email message copied.", "success");
       } catch {
         showToast("Clipboard copy failed.", "error");
       }
+    });
+  }
+
+  if (responseSendBtn) {
+    responseSendBtn.addEventListener("click", async () => {
+      const documentId = (responseTemplateSelect && responseTemplateSelect.dataset.documentId) || reviewId.value;
+      if (!documentId) {
+        setResponseSendStatus("Select a document first.", true);
+        return;
+      }
+      await sendResponseEmail(documentId);
     });
   }
 
@@ -2149,6 +2242,11 @@ function bindAdvancedActions() {
       }
     });
   }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && responseModal && !responseModal.hidden) {
+      closeResponseModal();
+    }
+  });
 
   if (notificationBell) {
     notificationBell.addEventListener("click", async () => {

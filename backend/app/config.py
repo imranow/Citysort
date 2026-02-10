@@ -13,7 +13,7 @@ DATABASE_PATH = DATA_DIR / "citysort.db"
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env", override=True)
 except Exception:
     pass
 
@@ -75,7 +75,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest").strip()
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514").strip()
 
 RULES_PATH_RAW = os.getenv("CITYSORT_RULES_PATH", str(DATA_DIR / "document_rules.json")).strip()
 RULES_CONFIG_PATH = Path(RULES_PATH_RAW)
@@ -148,6 +148,18 @@ WATCH_ENABLED = _env_bool("CITYSORT_WATCH_ENABLED", False)
 # Notifications / Webhooks
 WEBHOOK_URL = os.getenv("CITYSORT_WEBHOOK_URL", "").strip()
 WEBHOOK_ENABLED = _env_bool("CITYSORT_WEBHOOK_ENABLED", False)
+
+# Outbound email delivery (SMTP)
+EMAIL_ENABLED = _env_bool("CITYSORT_EMAIL_ENABLED", False)
+EMAIL_FROM_ADDRESS = os.getenv("CITYSORT_EMAIL_FROM_ADDRESS", "").strip()
+EMAIL_FROM_NAME = os.getenv("CITYSORT_EMAIL_FROM_NAME", "City Records Office").strip() or "City Records Office"
+SMTP_HOST = os.getenv("CITYSORT_SMTP_HOST", "").strip()
+SMTP_PORT = _env_int("CITYSORT_SMTP_PORT", 587, min_value=1, max_value=65535)
+SMTP_USERNAME = os.getenv("CITYSORT_SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("CITYSORT_SMTP_PASSWORD", "").strip()
+SMTP_USE_TLS = _env_bool("CITYSORT_SMTP_USE_TLS", True)
+SMTP_USE_SSL = _env_bool("CITYSORT_SMTP_USE_SSL", False)
+SMTP_TIMEOUT_SECONDS = _env_int("CITYSORT_SMTP_TIMEOUT_SECONDS", 20, min_value=3, max_value=120)
 
 # Deployment integration
 DEPLOY_PROVIDER = os.getenv("CITYSORT_DEPLOY_PROVIDER", "local").strip().lower()

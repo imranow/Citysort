@@ -373,6 +373,33 @@ class TemplateRenderResponse(BaseModel):
     document_id: str
 
 
+class TemplateComposeResponse(BaseModel):
+    template_id: int
+    template_name: str
+    document_id: str
+    to_email: Optional[str] = None
+    subject: str
+    body: str
+
+
+class ResponseEmailSendRequest(BaseModel):
+    to_email: str
+    subject: str
+    body: str
+    actor: str = "dashboard_reviewer"
+
+
+class ResponseEmailSendResponse(BaseModel):
+    id: int
+    document_id: str
+    to_email: str
+    subject: str
+    status: str
+    error: Optional[str] = None
+    sent_at: Optional[str] = None
+    created_at: str
+
+
 # --- Bulk Operations ---
 
 class BulkActionRequest(BaseModel):

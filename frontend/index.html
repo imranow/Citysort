@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260210b" />
   </head>
   <body>
     <div class="app-shell">
@@ -522,7 +522,7 @@ FROM documents_to_ingest</textarea>
                         <button type="submit">Approve</button>
                         <button type="button" id="reject" class="secondary">Keep In Review</button>
                         <button type="button" id="reprocess" class="secondary">Reprocess</button>
-                        <button type="button" id="respond-btn" class="secondary">Respond</button>
+                        <button type="button" id="respond-btn" class="secondary">Respond by Email</button>
                       </div>
                       <div id="transition-actions" class="transition-actions"></div>
 
@@ -673,48 +673,26 @@ FROM documents_to_ingest</textarea>
     <div id="response-modal" class="response-modal" hidden>
       <div class="response-modal-card">
         <div class="response-modal-head">
-          <h3>Response Template</h3>
-          <button type="button" id="response-modal-close" class="secondary" data-close-response-modal>Close</button>
+          <h3>Respond by Email</h3>
+          <button type="button" id="response-modal-close" class="secondary">Close</button>
         </div>
         <label for="response-template-select">Template</label>
         <select id="response-template-select"></select>
-        <label for="response-rendered-preview">Preview</label>
-        <pre id="response-rendered-preview" class="mono-block response-preview">Select a template.</pre>
+        <label for="response-to-email">To</label>
+        <input id="response-to-email" type="email" placeholder="recipient@example.com" />
+        <label for="response-subject-input">Subject</label>
+        <input id="response-subject-input" type="text" placeholder="Email subject" />
+        <label for="response-body-input">Message</label>
+        <textarea id="response-body-input" class="response-preview" rows="10" placeholder="Select a template to load a draft message."></textarea>
+        <p id="response-send-status" class="status"></p>
         <div class="actions">
-          <button type="button" id="response-copy-btn">Copy to Clipboard</button>
-          <button type="button" id="response-cancel-btn" class="secondary" data-close-response-modal>Cancel</button>
+          <button type="button" id="response-copy-btn" class="secondary">Copy to Clipboard</button>
+          <button type="button" id="response-send-btn">Send Email</button>
+          <button type="button" id="response-cancel-btn" class="secondary">Cancel</button>
         </div>
       </div>
     </div>
-    <script>
-      (() => {
-        const modal = document.getElementById("response-modal");
-        if (!modal) return;
-
-        const closeModal = () => {
-          modal.hidden = true;
-        };
-
-        document.addEventListener("click", (event) => {
-          const target = event.target;
-          if (!(target instanceof Element)) return;
-          if (target.closest("[data-close-response-modal]")) {
-            closeModal();
-            return;
-          }
-          if (target === modal) {
-            closeModal();
-          }
-        });
-
-        document.addEventListener("keydown", (event) => {
-          if (event.key === "Escape" && !modal.hidden) {
-            closeModal();
-          }
-        });
-      })();
-    </script>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js?v=20260210"></script>
+    <script src="/static/app.v2.js?v=20260210b"></script>
   </body>
 </html>

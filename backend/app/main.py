@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -38,6 +39,7 @@ from .db_import import (
 )
 from .db import get_connection, init_db
 from .deployments import deployment_provider_health, trigger_manual_deployment
+from .emailer import email_configured, send_email
 from .jobs import enqueue_document_processing, get_job_by_id, get_jobs, start_job_worker, stop_job_worker
 from .document_tasks import process_document_by_id
 from .pipeline import route_document
@@ -48,6 +50,7 @@ from .repository import (
     create_audit_event,
     create_deployment,
     create_document,
+    create_outbound_email,
     create_invitation,
     get_latest_deployment,
     get_analytics_snapshot,
@@ -60,6 +63,7 @@ from .repository import (
     list_invitations,
     list_overdue_documents,
     revoke_api_key,
+    update_outbound_email,
     update_document,
 )
 from .notifications import (
@@ -71,6 +75,7 @@ from .notifications import (
 )
 from .rules import get_active_rules, get_rules_path, reset_rules_to_default, save_rules
 from .templates import (
+    compose_template_email,
     create_template as create_template_record,
     delete_template,
     get_template,
@@ -114,7 +119,10 @@ from .schemas import (
     RulesConfigResponse,
     RulesConfigUpdate,
     ReviewRequest,
+    ResponseEmailSendRequest,
+    ResponseEmailSendResponse,
     ServiceHealth,
+    TemplateComposeResponse,
     TemplateCreateRequest,
     TemplateListResponse,
     TemplateRecord,
@@ -144,6 +152,8 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _coerce_optional_text(value: object | None) -> Optional[str]:
     if value is None:
@@ -1207,6 +1217,109 @@ def render_template_for_document(
         template_name=template_record["name"],
         document_id=document_id,
     )
+
+
+@app.post(
+    "/api/templates/{template_id}/compose/{document_id}",
+    response_model=TemplateComposeResponse,
+)
+def compose_template_for_document(
+    template_id: int,
+    document_id: str,
+    request: Request = None,
+) -> TemplateComposeResponse:
+    _enforce(request, role="viewer")
+    try:
+        composed = compose_template_email(template_id, document_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return TemplateComposeResponse(**composed)
+
+
+@app.post(
+    "/api/documents/{document_id}/send-response",
+    response_model=ResponseEmailSendResponse,
+)
+def send_document_response(
+    document_id: str,
+    payload: ResponseEmailSendRequest,
+    request: Request = None,
+) -> ResponseEmailSendResponse:
+    identity = _enforce(request, role="operator")
+    document = get_document(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    to_email = str(payload.to_email or "").strip()
+    subject = str(payload.subject or "").strip()
+    body = str(payload.body or "").strip()
+    if not EMAIL_RE.match(to_email):
+        raise HTTPException(status_code=400, detail="A valid recipient email is required.")
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject is required.")
+    if not body:
+        raise HTTPException(status_code=400, detail="Message body is required.")
+
+    actor = str(identity.get("actor", payload.actor))
+    email_record = create_outbound_email(
+        document_id=document_id,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        status="pending",
+    )
+
+    if not email_configured():
+        failed = update_outbound_email(
+            int(email_record["id"]),
+            status="failed",
+            error="Email sending is not configured.",
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="response_email_failed",
+            actor=actor,
+            details=f"to={to_email} reason=email_not_configured",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Email sending is not configured. Set CITYSORT_EMAIL_* and CITYSORT_SMTP_* env vars.",
+        )
+
+    try:
+        send_email(to_email=to_email, subject=subject, body=body)
+        updated = update_outbound_email(
+            int(email_record["id"]),
+            status="sent",
+            sent_at=_utcnow_iso(),
+            error=None,
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="response_email_sent",
+            actor=actor,
+            details=f"to={to_email} subject={subject}",
+        )
+        create_notification(
+            type="response_sent",
+            title=f"Response email sent: {document.get('filename', 'document')}",
+            message=f"Sent to {to_email}",
+            document_id=document_id,
+        )
+        return ResponseEmailSendResponse(**(updated or email_record))
+    except Exception as exc:
+        failed = update_outbound_email(
+            int(email_record["id"]),
+            status="failed",
+            error=str(exc),
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="response_email_failed",
+            actor=actor,
+            details=f"to={to_email} error={exc}",
+        )
+        return ResponseEmailSendResponse(**(failed or email_record))
 
 
 # =====================================================================

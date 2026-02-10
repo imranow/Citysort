@@ -1446,17 +1446,21 @@ button:disabled {
   gap: 1px;
   border: 1px solid var(--line);
   min-height: 520px;
-  max-height: calc(100vh - 260px);
-  overflow: hidden;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  align-items: start;
 }
 
 /* Left: Document list */
 .review-list-pane {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--surface);
+  max-height: calc(100vh - 260px);
 }
 
 .review-list-toolbar {
@@ -1545,6 +1549,7 @@ button:disabled {
 
 .review-list-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -1641,7 +1646,9 @@ button:disabled {
 /* Right: Review detail */
 .review-detail-pane {
   padding: 1.5rem;
-  overflow-y: auto;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
   background: var(--surface);
 }
 
@@ -2439,6 +2446,8 @@ tbody tr.is-selected {
   border: 1px solid var(--line);
   background: var(--surface);
   padding: 1.25rem 1.5rem;
+  display: grid;
+  gap: 0.5rem;
 }
 
 .response-modal-head {
@@ -2449,10 +2458,22 @@ tbody tr.is-selected {
 }
 
 .response-preview {
-  min-height: 180px;
+  min-height: 220px;
   max-height: 48vh;
   overflow: auto;
   background: var(--surface-muted);
+  resize: vertical;
+}
+
+.response-modal .actions {
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+#response-send-status {
+  min-height: 1rem;
+  margin: 0;
 }
 
 /* ── Responsive ──────────────────────────────────── */
@@ -2473,6 +2494,7 @@ tbody tr.is-selected {
 @media (max-width: 1040px) {
   .review-split {
     grid-template-columns: 1fr;
+    height: auto;
     max-height: none;
   }
 
