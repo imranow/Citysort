@@ -1940,7 +1940,7 @@ const CONNECTOR_REGISTRY = {
   servicenow: {
     name: "ServiceNow",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.servicenow,
     fields: [
       { id: "instance_url", label: "Instance URL", type: "url", placeholder: "https://yourinstance.service-now.com", required: true },
@@ -1953,7 +1953,7 @@ const CONNECTOR_REGISTRY = {
   confluence: {
     name: "Confluence",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.confluence,
     fields: [
       { id: "base_url", label: "Base URL", type: "url", placeholder: "https://yoursite.atlassian.net/wiki", required: true },
@@ -1966,7 +1966,7 @@ const CONNECTOR_REGISTRY = {
   salesforce: {
     name: "Salesforce",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.salesforce,
     fields: [
       { id: "instance_url", label: "Instance URL", type: "url", placeholder: "https://yourorg.salesforce.com", required: true },
@@ -1980,7 +1980,7 @@ const CONNECTOR_REGISTRY = {
   google_cloud_storage: {
     name: "Google Cloud Storage",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.google_cloud_storage,
     fields: [
       { id: "project_id", label: "Project ID", type: "text", required: true },
@@ -1992,7 +1992,7 @@ const CONNECTOR_REGISTRY = {
   amazon_s3: {
     name: "Amazon S3",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.amazon_s3,
     fields: [
       { id: "bucket_name", label: "Bucket Name", type: "text", required: true },
@@ -2006,7 +2006,7 @@ const CONNECTOR_REGISTRY = {
   jira: {
     name: "Jira",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.jira,
     fields: [
       { id: "base_url", label: "Base URL", type: "url", placeholder: "https://yoursite.atlassian.net", required: true },
@@ -2020,7 +2020,7 @@ const CONNECTOR_REGISTRY = {
   sharepoint: {
     name: "SharePoint",
     category: "saas",
-    status: "coming_soon",
+    status: "available",
     icon: _cIcon.sharepoint,
     fields: [
       { id: "site_url", label: "Site URL", type: "url", placeholder: "https://yourorg.sharepoint.com/sites/...", required: true },
@@ -2112,15 +2112,17 @@ function openConnectorConfig(connectorId) {
   fieldsHtml += '</div>';
   connectorConfigFields.innerHTML = fieldsHtml;
 
+  // Show query section for database connectors, limit section for SaaS
   connectorQuerySection.style.display = connector.hasQuery ? "block" : "none";
 
-  if (connector.status === "coming_soon") {
-    connectorImportBtn.disabled = true;
-    connectorImportBtn.textContent = "Import (Coming Soon)";
-  } else {
-    connectorImportBtn.disabled = false;
-    connectorImportBtn.textContent = "Import Documents";
+  // For SaaS connectors without query section, add a limit input
+  if (!connector.hasQuery && connector.category === "saas") {
+    const limitHtml = `<div class="connector-field" style="margin-top:12px;"><label for="connector-limit">Import Limit</label><input id="connector-limit" type="number" min="1" max="500" value="50" style="width:100px;" /></div>`;
+    connectorConfigFields.insertAdjacentHTML("beforeend", limitHtml);
   }
+
+  connectorImportBtn.disabled = false;
+  connectorImportBtn.textContent = "Import Documents";
   connectorStatus.textContent = "";
 }
 
@@ -2174,6 +2176,45 @@ async function _handleDatabaseImport(connector, values) {
     } else {
       connectorStatus.textContent = msg;
       showToast("Import completed: " + result.imported_count + " rows", "success");
+    }
+    await loadAll();
+  } catch (error) {
+    connectorStatus.textContent = `Import failed: ${error.message}`;
+    showToast("Import failed: " + error.message, "error");
+  } finally {
+    setButtonBusy(connectorImportBtn, "Importing...", false);
+  }
+}
+
+async function _handleSaaSImport(connectorId, values) {
+  const limit = Number(document.getElementById("connector-limit")?.value || 50);
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 50, 500));
+
+  const payload = {
+    config: values,
+    limit: safeLimit,
+    process_async: true,
+    actor: "dashboard_admin",
+  };
+
+  connectorStatus.textContent = "Importing from " + (CONNECTOR_REGISTRY[connectorId]?.name || connectorId) + "...";
+  setButtonBusy(connectorImportBtn, "Importing...", true);
+
+  try {
+    const result = await parseJSON(
+      await apiFetch(`/api/connectors/${connectorId}/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+    const msg = `Imported ${result.imported_count} document(s). Skipped ${result.skipped_count} (already imported). Failed ${result.failed_count}.`;
+    if (result.errors && result.errors.length) {
+      connectorStatus.textContent = `${msg} First error: ${result.errors[0]}`;
+      showToast("Import completed with errors", "warning");
+    } else {
+      connectorStatus.textContent = msg;
+      showToast("Import completed: " + result.imported_count + " documents", "success");
     }
     await loadAll();
   } catch (error) {
@@ -2239,8 +2280,7 @@ function bindConnectors() {
     if (connector.category === "database") {
       await _handleDatabaseImport(connector, values);
     } else {
-      connectorStatus.textContent = "SaaS import is not yet implemented.";
-      showToast("SaaS import coming soon", "info");
+      await _handleSaaSImport(activeConnectorId, values);
     }
   });
 }

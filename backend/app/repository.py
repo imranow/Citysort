@@ -263,34 +263,41 @@ def get_analytics_snapshot() -> dict[str, Any]:
             (utcnow_iso(),),
         ).fetchone()
 
-        try:
-            missing_contact_row = connection.execute(
-                """
-                SELECT COUNT(*) AS total
-                FROM documents
-                WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
-                  AND COALESCE(
-                    NULLIF(json_extract(extracted_fields, '$.applicant_email'), ''),
-                    NULLIF(json_extract(extracted_fields, '$.contact_email'), ''),
-                    NULLIF(json_extract(extracted_fields, '$.sender_email'), ''),
-                    NULLIF(json_extract(extracted_fields, '$.email'), '')
-                  ) IS NULL
-                """
-            ).fetchone()
-            analytics["missing_contact_email"] = int(missing_contact_row["total"]) if missing_contact_row else 0
-        except Exception:
-            analytics["missing_contact_email"] = 0
+        missing_contact_total = 0
+        contact_rows = connection.execute(
+            """
+            SELECT extracted_fields
+            FROM documents
+            WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
+            """
+        ).fetchall()
+        for row in contact_rows:
+            raw = row["extracted_fields"] if isinstance(row, dict) or hasattr(row, "__getitem__") else None
+            fields: dict[str, Any]
+            try:
+                fields = json.loads(raw) if raw else {}
+            except Exception:
+                fields = {}
+            contact = (
+                str(fields.get("applicant_email", "")).strip()
+                or str(fields.get("contact_email", "")).strip()
+                or str(fields.get("sender_email", "")).strip()
+                or str(fields.get("email", "")).strip()
+            )
+            if not contact:
+                missing_contact_total += 1
+        analytics["missing_contact_email"] = missing_contact_total
 
-    # Emails sent today.
-    try:
-        today_start = utcnow_iso()[:10] + "T00:00:00"
-        emails_today_row = connection.execute(
-            "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
-            (today_start,),
-        ).fetchone()
-        analytics["emails_sent_today"] = int(emails_today_row["total"]) if emails_today_row else 0
-    except Exception:
-        analytics["emails_sent_today"] = 0
+        # Emails sent today.
+        try:
+            today_start = utcnow_iso()[:10] + "T00:00:00"
+            emails_today_row = connection.execute(
+                "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
+                (today_start,),
+            ).fetchone()
+            analytics["emails_sent_today"] = int(emails_today_row["total"]) if emails_today_row else 0
+        except Exception:
+            analytics["emails_sent_today"] = 0
 
     analytics["by_type"] = [dict(row) for row in by_type_rows]
     analytics["by_status"] = [dict(row) for row in by_status_rows]
@@ -763,6 +770,27 @@ def claim_next_job(*, worker_id: str) -> Optional[dict[str, Any]]:
     return _deserialize_job(claimed) if claimed else None
 
 
+def claim_job_by_id(*, job_id: str, worker_id: str) -> Optional[dict[str, Any]]:
+    started_at = utcnow_iso()
+    with get_connection() as connection:
+        updated = connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'running',
+                started_at = ?,
+                worker_id = ?,
+                attempts = attempts + 1,
+                error = NULL
+            WHERE id = ? AND status = 'queued'
+            """,
+            (started_at, worker_id, job_id),
+        )
+        if updated.rowcount != 1:
+            return None
+        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return _deserialize_job(row) if row else None
+
+
 def complete_job(*, job_id: str, result: dict[str, Any]) -> Optional[dict[str, Any]]:
     finished_at = utcnow_iso()
     with get_connection() as connection:
@@ -964,3 +992,30 @@ def _deserialize_job(row: Any) -> dict[str, Any]:
         else:
             record[key] = {}
     return record
+
+
+def purge_audit_events_before(older_than_iso: str) -> int:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM audit_events WHERE created_at < ?",
+            (older_than_iso,),
+        )
+    return max(int(cursor.rowcount), 0)
+
+
+def purge_notifications_before(older_than_iso: str) -> int:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM notifications WHERE created_at < ?",
+            (older_than_iso,),
+        )
+    return max(int(cursor.rowcount), 0)
+
+
+def purge_outbound_emails_before(older_than_iso: str) -> int:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM outbound_emails WHERE created_at < ?",
+            (older_than_iso,),
+        )
+    return max(int(cursor.rowcount), 0)

@@ -90,9 +90,13 @@ To enable external providers:
 - Optional custom rules file path: `CITYSORT_RULES_PATH` (defaults to `data/document_rules.json`)
 - Confidence gate for auto-routing: `CITYSORT_CONFIDENCE_THRESHOLD` (default `0.82`)
 - Always-human-review types: `CITYSORT_FORCE_REVIEW_DOC_TYPES` (comma-separated)
+- Primary database: `CITYSORT_DATABASE_URL`
+  - Development: `sqlite:///data/citysort.db`
+  - Production: `postgresql://...`
 - Auth and RBAC:
   - `CITYSORT_REQUIRE_AUTH=true` enables authentication checks
   - `CITYSORT_AUTH_SECRET` signs user access tokens
+  - `CITYSORT_STRICT_AUTH_SECRET=true` blocks startup if using weak/default secrets
 - Deployment provider:
   - `CITYSORT_DEPLOY_PROVIDER=local|render|github`
   - `CITYSORT_DEPLOY_COMMAND` for local deploy execution
@@ -101,6 +105,15 @@ To enable external providers:
   - `CITYSORT_WORKER_ENABLED=true`
   - `CITYSORT_WORKER_POLL_INTERVAL_SECONDS`
   - `CITYSORT_WORKER_MAX_ATTEMPTS`
+  - `CITYSORT_QUEUE_BACKEND=sqlite|redis`
+  - `CITYSORT_REDIS_URL` and `CITYSORT_REDIS_JOB_QUEUE_NAME` when using Redis queueing
+- Security/operations:
+  - `CITYSORT_ENFORCE_HTTPS=true`
+  - `CITYSORT_CORS_ALLOWED_ORIGINS=https://your-ui.example`
+  - `CITYSORT_RATE_LIMIT_*`
+  - `CITYSORT_ENCRYPTION_AT_REST_ENABLED=true` + `CITYSORT_ENCRYPTION_KEY`
+  - `CITYSORT_PROMETHEUS_ENABLED=true` (`/metrics`)
+  - `CITYSORT_SENTRY_DSN=...`
 
 ### Safer AI rollout profile (recommended)
 
@@ -124,6 +137,7 @@ Dashboard: [http://localhost:8000](http://localhost:8000)
 Health: [http://localhost:8000/health](http://localhost:8000/health)
 Readiness: [http://localhost:8000/readyz](http://localhost:8000/readyz)
 Liveness: [http://localhost:8000/livez](http://localhost:8000/livez)
+Metrics: [http://localhost:8000/metrics](http://localhost:8000/metrics)
 
 ## Bootstrap auth (recommended before production)
 
@@ -154,6 +168,33 @@ cd citysort
 source .venv/bin/activate
 PYTHONPATH=backend pytest backend/tests -q
 ```
+
+## Backups
+
+```bash
+./scripts/backup.sh
+./scripts/restore.sh <db_backup_file> [uploads_archive]
+```
+
+## SQLite -> PostgreSQL migration
+
+```bash
+python scripts/migrate_sqlite_to_postgres.py \
+  --sqlite-path data/citysort.db \
+  --postgres-url postgresql://user:pass@host:5432/citysort
+```
+
+## Operational Docs
+
+- `docs/deployment-guide.md`
+- `docs/operations-runbook.md`
+- `docs/incident-response-playbook.md`
+- `docs/architecture-roadmap.md`
+
+## CI/CD
+
+- CI workflow: `.github/workflows/ci.yml` (tests + Docker build)
+- Deploy workflow: `.github/workflows/deploy.yml` (manual dev/staging/production dispatch scaffold)
 
 ## End-to-end demo run
 

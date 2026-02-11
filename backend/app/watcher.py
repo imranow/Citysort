@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
-import shutil
 import threading
 import time
 from pathlib import Path
@@ -14,6 +13,8 @@ from uuid import uuid4
 from .db import get_connection
 from .jobs import enqueue_document_processing
 from .repository import create_audit_event, create_document, utcnow_iso
+from .security import UploadValidationError, validate_upload
+from .storage import write_document_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +99,14 @@ class FolderWatcher:
         document_id = str(uuid4())
         safe_filename = f"{document_id}_{file_path.name}"
         dest = upload_dir / safe_filename
-        shutil.copy2(file_path, dest)
-
-        content_type = mimetypes.guess_type(file_path.name)[0]
+        payload = file_path.read_bytes()
+        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        try:
+            validate_upload(filename=file_path.name, content_type=content_type, payload=payload)
+        except UploadValidationError as exc:
+            logger.warning("Watcher skipped %s due to validation failure: %s", file_path, exc)
+            return
+        write_document_bytes(dest, payload)
 
         create_document(
             document={

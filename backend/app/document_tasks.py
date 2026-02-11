@@ -8,6 +8,7 @@ from .config import CONFIDENCE_THRESHOLD, PROCESSED_DIR
 from .pipeline import process_document
 from .repository import create_audit_event, get_document, update_document
 from .rules import get_active_rules
+from .storage import open_plaintext_path
 
 
 def process_document_by_id(
@@ -20,11 +21,13 @@ def process_document_by_id(
         return
 
     try:
-        result = process_document(
-            file_path=document["storage_path"],
-            content_type=document.get("content_type"),
-            force_anthropic_classification=force_anthropic_classification,
-        )
+        source_path = Path(document["storage_path"])
+        with open_plaintext_path(source_path, suffix=source_path.suffix) as plain_path:
+            result = process_document(
+                file_path=str(plain_path),
+                content_type=document.get("content_type"),
+                force_anthropic_classification=force_anthropic_classification,
+            )
         final_status = "needs_review" if result["requires_review"] else "routed"
 
         # Compute SLA due_date from the matched rule.
@@ -62,7 +65,6 @@ def process_document_by_id(
             },
         )
 
-        source_path = Path(document["storage_path"])
         target_path = PROCESSED_DIR / source_path.name
         if source_path.exists():
             shutil.copy2(source_path, target_path)

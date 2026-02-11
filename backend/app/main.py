@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,8 +10,9 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .auth import (
     authenticate_user,
@@ -19,16 +20,34 @@ from .auth import (
     bootstrap_admin,
     create_user_account,
     get_users,
+    role_allows,
     set_user_role,
 )
 from .config import (
     ANTHROPIC_API_KEY,
+    APP_ENV,
+    AUTH_SECRET,
+    AUTH_SECRET_PLACEHOLDER_VALUES,
+    CORS_ALLOW_CREDENTIALS,
+    CORS_ALLOWED_ORIGINS,
+    DATABASE_BACKEND,
     DEPLOY_PROVIDER,
+    ENFORCE_HTTPS,
+    IS_PRODUCTION,
     CLASSIFIER_PROVIDER,
     CONFIDENCE_THRESHOLD,
     FORCE_REVIEW_DOC_TYPES,
     OCR_PROVIDER,
+    PROMETHEUS_ENABLED,
+    RATE_LIMIT_AI_PER_WINDOW,
+    RATE_LIMIT_DEFAULT_PER_WINDOW,
+    RATE_LIMIT_ENABLED,
+    RATE_LIMIT_UPLOAD_PER_WINDOW,
+    RATE_LIMIT_WINDOW_SECONDS,
     REQUIRE_AUTH,
+    STRICT_APPROVAL_ROLE,
+    STRICT_AUTH_SECRET,
+    TRUSTED_HOSTS,
     UPLOAD_DIR,
 )
 from .db_import import (
@@ -42,6 +61,8 @@ from .db import get_connection, init_db
 from .deployments import deployment_provider_health, trigger_manual_deployment
 from .emailer import email_configured, send_email
 from .jobs import enqueue_document_processing, get_job_by_id, get_jobs, start_job_worker, stop_job_worker
+from .logging_setup import configure_logging
+from .observability import init_observability, metrics_response, observe_request, start_timer
 from .document_tasks import process_document_by_id
 from .pipeline import route_document
 from .repository import (
@@ -87,6 +108,19 @@ from .templates import (
     update_template,
 )
 from .watcher import start_watcher, stop_watcher
+from .security import (
+    SlidingWindowRateLimiter,
+    UploadValidationError,
+    apply_security_headers,
+    client_ip,
+    should_block_insecure_request,
+    validate_upload,
+)
+from .storage import read_document_bytes, validate_encryption_configuration, write_document_bytes
+from .connectors.base import ConnectorError, get_connector, list_connector_types
+from .connectors.importer import import_from_connector, get_sync_count
+# Register all connectors so they are available via get_connector()
+from .connectors import servicenow, confluence, salesforce, gcs, s3, jira_connector, sharepoint  # noqa: F401
 from .schemas import (
     AnalyticsResponse,
     AutomationAnthropicSweepRequest,
@@ -105,6 +139,10 @@ from .schemas import (
     BulkActionRequest,
     BulkActionResponse,
     ConnectivityResponse,
+    ConnectorConfigSaveRequest,
+    ConnectorConfigResponse,
+    ConnectorImportRequest,
+    ConnectorImportResponse,
     ConnectorTestRequest,
     ConnectorTestResponse,
     DatabaseImportRequest,
@@ -142,6 +180,9 @@ from .schemas import (
     UserRoleUpdateRequest,
 )
 
+configure_logging()
+logger = logging.getLogger(__name__)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
@@ -153,14 +194,108 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS or [],
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if TRUSTED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_rate_limiter = SlidingWindowRateLimiter()
+
+
+def _rate_limit_scope(path: str) -> tuple[str, int]:
+    normalized = str(path or "").strip().lower()
+    if normalized.startswith("/api/documents/upload") or normalized.startswith("/api/documents/import"):
+        return "upload", RATE_LIMIT_UPLOAD_PER_WINDOW
+    if (
+        normalized.startswith("/api/automation/")
+        or normalized.endswith("/reprocess")
+        or normalized.startswith("/api/templates/")
+    ):
+        return "ai", RATE_LIMIT_AI_PER_WINDOW
+    return "default", RATE_LIMIT_DEFAULT_PER_WINDOW
+
+
+@app.middleware("http")
+async def secure_request_middleware(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    started = start_timer()
+    source_ip = client_ip(request)
+    path = request.url.path
+
+    if should_block_insecure_request(request):
+        response = JSONResponse(
+            status_code=400,
+            content={"detail": "HTTPS is required for this endpoint."},
+        )
+        response.headers["X-Request-ID"] = request_id
+        apply_security_headers(response)
+        return response
+
+    rate_decision = None
+    if RATE_LIMIT_ENABLED:
+        scope, limit = _rate_limit_scope(path)
+        rate_decision = _rate_limiter.check(
+            f"{source_ip}:{scope}",
+            limit=limit,
+            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+        )
+        if not rate_decision.allowed:
+            response = JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please retry later."},
+            )
+            response.headers["Retry-After"] = str(rate_decision.reset_seconds)
+            response.headers["X-RateLimit-Limit"] = str(rate_decision.limit)
+            response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
+            response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
+            response.headers["X-Request-ID"] = request_id
+            apply_security_headers(response)
+            observe_request(method=request.method, path=path, status_code=response.status_code, started_at=started)
+            logger.warning(
+                "rate_limited method=%s path=%s ip=%s window=%ss limit=%s",
+                request.method,
+                path,
+                source_ip,
+                RATE_LIMIT_WINDOW_SECONDS,
+                rate_decision.limit,
+                extra={"request_id": request_id},
+            )
+            return response
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "unhandled_error method=%s path=%s ip=%s",
+            request.method,
+            path,
+            source_ip,
+            extra={"request_id": request_id},
+        )
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    response.headers["X-Request-ID"] = request_id
+    if rate_decision is not None:
+        response.headers["X-RateLimit-Limit"] = str(rate_decision.limit)
+        response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
+        response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
+    apply_security_headers(response)
+    observe_request(method=request.method, path=path, status_code=response.status_code, started_at=started)
+    logger.info(
+        "request_complete method=%s path=%s status=%s ip=%s",
+        request.method,
+        path,
+        response.status_code,
+        source_ip,
+        extra={"request_id": request_id},
+    )
+    return response
 
 def _coerce_optional_text(value: object | None) -> Optional[str]:
     if value is None:
@@ -284,6 +419,17 @@ def _connectivity_snapshot() -> ConnectivityResponse:
 
 @app.on_event("startup")
 def startup_event() -> None:
+    init_observability()
+    if STRICT_APPROVAL_ROLE and STRICT_APPROVAL_ROLE not in {"viewer", "operator", "admin"}:
+        raise RuntimeError("CITYSORT_STRICT_APPROVAL_ROLE must be one of: viewer, operator, admin.")
+    if STRICT_AUTH_SECRET and (REQUIRE_AUTH or IS_PRODUCTION):
+        if AUTH_SECRET.strip().lower() in AUTH_SECRET_PLACEHOLDER_VALUES:
+            raise RuntimeError(
+                "CITYSORT_AUTH_SECRET must be set to a strong secret for authenticated/production mode."
+            )
+    validate_encryption_configuration()
+    if ENFORCE_HTTPS and APP_ENV == "development":
+        logger.warning("CITYSORT_ENFORCE_HTTPS=true in development mode.")
     init_db()
     start_job_worker()
     start_watcher()
@@ -315,6 +461,8 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 def health_check() -> dict[str, str]:
     return {
         "status": "ok",
+        "environment": APP_ENV,
+        "database_backend": DATABASE_BACKEND,
         "ocr_provider": OCR_PROVIDER,
         "classifier_provider": CLASSIFIER_PROVIDER,
         "deploy_provider": DEPLOY_PROVIDER,
@@ -335,6 +483,13 @@ def readyz() -> dict[str, str]:
     if db_health.status != "ok":
         raise HTTPException(status_code=503, detail=db_health.details)
     return {"status": "ready"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    if not PROMETHEUS_ENABLED:
+        raise HTTPException(status_code=404, detail="Metrics endpoint is disabled.")
+    return metrics_response()
 
 
 @app.get("/")
@@ -416,7 +571,12 @@ async def upload_document(
     file_path = UPLOAD_DIR / safe_filename
 
     contents = await file.read()
-    file_path.write_bytes(contents)
+    content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    try:
+        validate_upload(filename=file.filename, content_type=content_type, payload=contents)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    write_document_bytes(file_path, contents)
 
     document = create_document(
         document={
@@ -424,7 +584,7 @@ async def upload_document(
             "filename": file.filename,
             "storage_path": str(file_path),
             "source_channel": source_channel,
-            "content_type": file.content_type,
+            "content_type": content_type,
             "status": "ingested",
             "requires_review": False,
             "confidence": 0.0,
@@ -515,9 +675,18 @@ def import_documents_from_database(
                 storage_path = UPLOAD_DIR / safe_filename
 
                 if source_path is not None:
-                    shutil.copy2(source_path, storage_path)
-                else:
-                    storage_path.write_bytes(file_bytes or b"")
+                    file_bytes = source_path.read_bytes()
+                payload_bytes = file_bytes or b""
+                content_type = content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                try:
+                    validate_upload(
+                        filename=filename,
+                        content_type=content_type,
+                        payload=payload_bytes,
+                    )
+                except UploadValidationError as exc:
+                    raise ValueError(str(exc))
+                write_document_bytes(storage_path, payload_bytes)
 
                 create_document(
                     document={
@@ -629,22 +798,122 @@ def test_connector(
 
     if connector_type in _SAAS_CONNECTOR_TYPES:
         config = payload.config or {}
-        missing = [k for k, v in config.items() if not str(v).strip()]
-        if missing:
+        try:
+            connector = get_connector(connector_type)
+            success, message = connector.test_connection(config)
             return ConnectorTestResponse(
-                success=False,
-                message=f"Missing required fields: {', '.join(missing)}",
+                success=success,
+                message=message,
                 connector_type=connector_type,
             )
-        friendly_name = connector_type.replace("_", " ").title()
-        return ConnectorTestResponse(
-            success=False,
-            message=f"{friendly_name} integration is coming soon. Your configuration looks valid.",
-            connector_type=connector_type,
-            details="SaaS connector integration pending.",
-        )
+        except ConnectorError as exc:
+            return ConnectorTestResponse(
+                success=False,
+                message=f"Connection failed: {exc}",
+                connector_type=connector_type,
+            )
 
     raise HTTPException(status_code=400, detail=f"Unknown connector type: {connector_type}")
+
+
+# --- Connector Config persistence ---
+
+@app.get("/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse)
+def get_connector_config(
+    connector_type: str,
+    request: Request = None,
+) -> ConnectorConfigResponse:
+    _enforce(request, role="operator")
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM connector_configs WHERE connector_type = ?", (connector_type,)
+        ).fetchone()
+    config_data = {}
+    enabled = True
+    last_sync = None
+    if row:
+        import json as _json
+        config_data = _json.loads(row["config_json"] or "{}")
+        enabled = bool(row["enabled"])
+        last_sync = row["last_sync_at"]
+    return ConnectorConfigResponse(
+        connector_type=connector_type,
+        config=config_data,
+        enabled=enabled,
+        last_sync_at=last_sync,
+        total_imported=get_sync_count(connector_type),
+    )
+
+
+@app.put("/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse)
+def save_connector_config(
+    connector_type: str,
+    payload: ConnectorConfigSaveRequest,
+    request: Request = None,
+) -> ConnectorConfigResponse:
+    _enforce(request, role="operator")
+    import json as _json
+    from .repository import utcnow_iso
+    now = utcnow_iso()
+    config_json = _json.dumps(payload.config)
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO connector_configs (connector_type, config_json, enabled, created_at, updated_at)
+               VALUES (?, ?, 1, ?, ?)
+               ON CONFLICT(connector_type) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at""",
+            (connector_type, config_json, now, now),
+        )
+    return ConnectorConfigResponse(
+        connector_type=connector_type,
+        config=payload.config,
+        enabled=True,
+        total_imported=get_sync_count(connector_type),
+    )
+
+
+# --- Connector Import ---
+
+@app.post("/api/connectors/{connector_type}/import", response_model=ConnectorImportResponse)
+def import_from_connector_endpoint(
+    connector_type: str,
+    payload: ConnectorImportRequest,
+    request: Request = None,
+) -> ConnectorImportResponse:
+    _enforce(request, role="operator")
+
+    # Use provided config, or fall back to saved config
+    config = payload.config
+    if not config:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT config_json FROM connector_configs WHERE connector_type = ?",
+                (connector_type,),
+            ).fetchone()
+        if row:
+            import json as _json
+            config = _json.loads(row["config_json"] or "{}")
+        if not config:
+            raise HTTPException(status_code=400, detail="No configuration provided or saved for this connector.")
+
+    try:
+        result = import_from_connector(
+            connector_type=connector_type,
+            config=config,
+            limit=payload.limit,
+            process_async=payload.process_async,
+            actor=payload.actor,
+        )
+    except ConnectorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return ConnectorImportResponse(
+        connector_type=connector_type,
+        imported_count=result["imported_count"],
+        skipped_count=result["skipped_count"],
+        failed_count=result["failed_count"],
+        documents=[{"id": d["id"], "filename": d["filename"], "status": d["status"]} for d in result.get("documents", [])],
+        errors=result.get("errors", []),
+    )
 
 
 @app.get("/api/documents", response_model=DocumentListResponse)
@@ -700,10 +969,10 @@ def download_document(document_id: str, request: Request = None):
     if not file_path.resolve().is_relative_to(UPLOAD_DIR.resolve()):
         raise HTTPException(status_code=403, detail="Access denied")
     media_type = mimetypes.guess_type(record["filename"])[0] or "application/octet-stream"
-    return FileResponse(
-        path=file_path,
+    file_bytes = read_document_bytes(file_path)
+    return Response(
+        content=file_bytes,
         media_type=media_type,
-        filename=record["filename"],
         headers={"Content-Disposition": f'attachment; filename="{record["filename"]}"'},
     )
 
@@ -720,13 +989,17 @@ async def reupload_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     contents = await file.read()
+    content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    try:
+        validate_upload(filename=file.filename, content_type=content_type, payload=contents)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     safe_filename = f"{document_id}_{Path(file.filename).name}"
     new_file_path = UPLOAD_DIR / safe_filename
     old_path = Path(document.get("storage_path", ""))
     if old_path.exists():
         old_path.unlink(missing_ok=True)
-    new_file_path.write_bytes(contents)
-    content_type = file.content_type or mimetypes.guess_type(file.filename)[0]
+    write_document_bytes(new_file_path, contents)
     update_document(document_id, updates={
         "storage_path": str(new_file_path),
         "filename": file.filename,
@@ -752,6 +1025,13 @@ def review_document(document_id: str, payload: ReviewRequest, request: Request =
     document = get_document(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    if payload.approve and STRICT_APPROVAL_ROLE:
+        actor_role = str(identity.get("role", "viewer")).lower()
+        if not role_allows(actor_role, STRICT_APPROVAL_ROLE):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Approvals require role '{STRICT_APPROVAL_ROLE}' or higher.",
+            )
 
     updates: dict[str, object] = {
         "reviewer_notes": payload.notes,

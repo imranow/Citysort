@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -36,6 +37,13 @@ def _env_csv_set(name: str) -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+def _env_csv_list(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default)
+    if raw is None or not raw.strip():
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 def _env_int(name: str, default: int, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
@@ -60,8 +68,38 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_database_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    if parsed.scheme:
+        return raw_url
+    # Plain filesystem path -> sqlite file.
+    path = Path(raw_url).expanduser()
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    return f"sqlite:///{path}"
+
+
 CONFIDENCE_THRESHOLD = _env_float("CITYSORT_CONFIDENCE_THRESHOLD", 0.82)
 FORCE_REVIEW_DOC_TYPES = _env_csv_set("CITYSORT_FORCE_REVIEW_DOC_TYPES")
+
+# Runtime environment
+APP_ENV = os.getenv("CITYSORT_ENV", "development").strip().lower() or "development"
+IS_PRODUCTION = APP_ENV in {"prod", "production"}
+
+# Primary datastore (SQLite for local dev, PostgreSQL for production).
+DATABASE_URL = _normalize_database_url(
+    os.getenv("CITYSORT_DATABASE_URL", f"sqlite:///{DATABASE_PATH}").strip()
+)
+_db_scheme = urlparse(DATABASE_URL).scheme.lower()
+if _db_scheme in {"postgres", "postgresql", "postgresql+psycopg2"}:
+    DATABASE_BACKEND = "postgresql"
+elif _db_scheme in {"sqlite", ""}:
+    DATABASE_BACKEND = "sqlite"
+else:
+    DATABASE_BACKEND = _db_scheme
+DATABASE_CONNECT_TIMEOUT_SECONDS = _env_int(
+    "CITYSORT_DATABASE_CONNECT_TIMEOUT_SECONDS", 8, min_value=1, max_value=120
+)
 
 OCR_PROVIDER = os.getenv("CITYSORT_OCR_PROVIDER", "local").strip().lower()
 CLASSIFIER_PROVIDER = os.getenv("CITYSORT_CLASSIFIER_PROVIDER", "rules").strip().lower()
@@ -133,12 +171,61 @@ URGENCY_KEYWORDS = {
 # Auth / RBAC
 REQUIRE_AUTH = _env_bool("CITYSORT_REQUIRE_AUTH", False)
 AUTH_SECRET = os.getenv("CITYSORT_AUTH_SECRET", "change-me-in-production").strip() or "change-me-in-production"
+AUTH_SECRET_PLACEHOLDER_VALUES = {"", "change-me-in-production", "dev", "test", "secret"}
+STRICT_AUTH_SECRET = _env_bool("CITYSORT_STRICT_AUTH_SECRET", True if IS_PRODUCTION else False)
 ACCESS_TOKEN_TTL_MINUTES = _env_int("CITYSORT_ACCESS_TOKEN_TTL_MINUTES", 60 * 12, min_value=5, max_value=60 * 24 * 30)
+
+# API hardening
+CORS_ALLOWED_ORIGINS = _env_csv_list(
+    "CITYSORT_CORS_ALLOWED_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000",
+)
+CORS_ALLOW_CREDENTIALS = _env_bool("CITYSORT_CORS_ALLOW_CREDENTIALS", False)
+TRUSTED_HOSTS = _env_csv_list("CITYSORT_TRUSTED_HOSTS", "localhost,127.0.0.1")
+ENFORCE_HTTPS = _env_bool("CITYSORT_ENFORCE_HTTPS", True if IS_PRODUCTION else False)
+SECURITY_HEADERS_ENABLED = _env_bool("CITYSORT_SECURITY_HEADERS_ENABLED", True)
+CONTENT_SECURITY_POLICY = os.getenv(
+    "CITYSORT_CONTENT_SECURITY_POLICY",
+    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; "
+    "img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';",
+).strip()
+REFERRER_POLICY = os.getenv("CITYSORT_REFERRER_POLICY", "strict-origin-when-cross-origin").strip()
+UPLOAD_MAX_BYTES = _env_int("CITYSORT_UPLOAD_MAX_BYTES", 25 * 1024 * 1024, min_value=1024, max_value=500 * 1024 * 1024)
+UPLOAD_ALLOWED_EXTENSIONS = {
+    ext.lower().lstrip(".")
+    for ext in _env_csv_list(
+        "CITYSORT_UPLOAD_ALLOWED_EXTENSIONS",
+        "pdf,txt,md,csv,json,docx,docm,png,jpg,jpeg,tif,tiff",
+    )
+}
+UPLOAD_ALLOWED_MIME_PREFIXES = {
+    item.strip().lower()
+    for item in _env_csv_list(
+        "CITYSORT_UPLOAD_ALLOWED_MIME_PREFIXES",
+        "application/,text/,image/",
+    )
+}
+UPLOAD_VIRUS_SCAN_ENABLED = _env_bool("CITYSORT_UPLOAD_VIRUS_SCAN_ENABLED", False)
+UPLOAD_VIRUS_SCAN_BLOCK_ON_ERROR = _env_bool("CITYSORT_UPLOAD_VIRUS_SCAN_BLOCK_ON_ERROR", True)
+CLAMAV_HOST = os.getenv("CITYSORT_CLAMAV_HOST", "127.0.0.1").strip()
+CLAMAV_PORT = _env_int("CITYSORT_CLAMAV_PORT", 3310, min_value=1, max_value=65535)
+RATE_LIMIT_ENABLED = _env_bool("CITYSORT_RATE_LIMIT_ENABLED", True)
+RATE_LIMIT_WINDOW_SECONDS = _env_int("CITYSORT_RATE_LIMIT_WINDOW_SECONDS", 60, min_value=1, max_value=3600)
+RATE_LIMIT_DEFAULT_PER_WINDOW = _env_int("CITYSORT_RATE_LIMIT_DEFAULT_PER_WINDOW", 120, min_value=1, max_value=50000)
+RATE_LIMIT_UPLOAD_PER_WINDOW = _env_int("CITYSORT_RATE_LIMIT_UPLOAD_PER_WINDOW", 20, min_value=1, max_value=50000)
+RATE_LIMIT_AI_PER_WINDOW = _env_int("CITYSORT_RATE_LIMIT_AI_PER_WINDOW", 30, min_value=1, max_value=50000)
+
+# At-rest encryption for uploaded files (optional).
+ENCRYPTION_AT_REST_ENABLED = _env_bool("CITYSORT_ENCRYPTION_AT_REST_ENABLED", False)
+ENCRYPTION_KEY = os.getenv("CITYSORT_ENCRYPTION_KEY", "").strip()
 
 # Durable async jobs
 WORKER_POLL_INTERVAL_SECONDS = _env_int("CITYSORT_WORKER_POLL_INTERVAL_SECONDS", 2, min_value=1, max_value=30)
 WORKER_MAX_ATTEMPTS = _env_int("CITYSORT_WORKER_MAX_ATTEMPTS", 3, min_value=1, max_value=10)
 WORKER_ENABLED = _env_bool("CITYSORT_WORKER_ENABLED", True)
+QUEUE_BACKEND = os.getenv("CITYSORT_QUEUE_BACKEND", "sqlite").strip().lower() or "sqlite"
+REDIS_URL = os.getenv("CITYSORT_REDIS_URL", "redis://127.0.0.1:6379/0").strip()
+REDIS_JOB_QUEUE_NAME = os.getenv("CITYSORT_REDIS_JOB_QUEUE_NAME", "citysort:jobs").strip() or "citysort:jobs"
 
 # Watched folder ingestion
 WATCH_DIR = os.getenv("CITYSORT_WATCH_DIR", "").strip() or None
@@ -169,6 +256,21 @@ AUTO_ASSIGN_ENABLED = _env_bool("CITYSORT_AUTO_ASSIGN", False)
 ESCALATION_ENABLED = _env_bool("CITYSORT_ESCALATION_ENABLED", True)
 ESCALATION_DAYS = _env_int("CITYSORT_ESCALATION_DAYS", 3, min_value=1, max_value=30)
 ESCALATION_FALLBACK_USER = os.getenv("CITYSORT_ESCALATION_FALLBACK_USER", "").strip()
+
+# Separation of duties (optional stricter workflow approvals).
+STRICT_APPROVAL_ROLE = os.getenv("CITYSORT_STRICT_APPROVAL_ROLE", "").strip().lower()
+
+# Data governance
+AUDIT_RETENTION_DAYS = _env_int("CITYSORT_AUDIT_RETENTION_DAYS", 365 * 7, min_value=1, max_value=365 * 20)
+OUTBOUND_EMAIL_RETENTION_DAYS = _env_int("CITYSORT_OUTBOUND_EMAIL_RETENTION_DAYS", 365 * 7, min_value=1, max_value=365 * 20)
+NOTIFICATION_RETENTION_DAYS = _env_int("CITYSORT_NOTIFICATION_RETENTION_DAYS", 365 * 2, min_value=1, max_value=365 * 20)
+
+# Observability
+LOG_LEVEL = os.getenv("CITYSORT_LOG_LEVEL", "INFO").strip().upper() or "INFO"
+LOG_JSON = _env_bool("CITYSORT_LOG_JSON", True)
+SENTRY_DSN = os.getenv("CITYSORT_SENTRY_DSN", "").strip()
+SENTRY_TRACES_SAMPLE_RATE = _env_float("CITYSORT_SENTRY_TRACES_SAMPLE_RATE", 0.0, min_value=0.0, max_value=1.0)
+PROMETHEUS_ENABLED = _env_bool("CITYSORT_PROMETHEUS_ENABLED", True)
 
 # Deployment integration
 DEPLOY_PROVIDER = os.getenv("CITYSORT_DEPLOY_PROVIDER", "local").strip().lower()

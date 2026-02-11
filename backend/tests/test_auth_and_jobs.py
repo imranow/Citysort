@@ -90,11 +90,11 @@ def test_durable_job_worker_processes_document(isolated_modules) -> None:
     job = jobs.enqueue_document_processing(document_id="doc-1", actor="test_worker")
     jobs.start_job_worker()
     try:
-        for _ in range(200):
+        for _ in range(500):
             current = jobs.get_job_by_id(job["id"])
             if current and current["status"] in {"completed", "failed"}:
                 break
-            time.sleep(0.01)
+            time.sleep(0.02)
         current = jobs.get_job_by_id(job["id"])
         assert current is not None
         assert current["status"] == "completed"

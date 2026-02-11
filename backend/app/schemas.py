@@ -251,13 +251,13 @@ class PlatformSummaryResponse(BaseModel):
 
 class AuthBootstrapRequest(BaseModel):
     email: str
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
     full_name: Optional[str] = None
 
 
 class AuthLoginRequest(BaseModel):
     email: str
-    password: str
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class UserRecord(BaseModel):
@@ -279,7 +279,7 @@ class AuthResponse(BaseModel):
 
 class UserCreateRequest(BaseModel):
     email: str
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
     role: str = "viewer"
     full_name: Optional[str] = None
 
@@ -444,4 +444,40 @@ class BulkActionRequest(BaseModel):
 class BulkActionResponse(BaseModel):
     success_count: int
     error_count: int
+    errors: list[str] = Field(default_factory=list)
+
+
+# --- Connector Import ---
+
+class ConnectorConfigSaveRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectorConfigResponse(BaseModel):
+    connector_type: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    last_sync_at: Optional[str] = None
+    total_imported: int = 0
+
+
+class ConnectorImportRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    limit: int = Field(default=50, ge=1, le=500)
+    process_async: bool = True
+    actor: str = "connector_import"
+
+
+class ConnectorImportDocument(BaseModel):
+    id: str
+    filename: str
+    status: str
+
+
+class ConnectorImportResponse(BaseModel):
+    connector_type: str
+    imported_count: int
+    skipped_count: int
+    failed_count: int
+    documents: list[ConnectorImportDocument] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
