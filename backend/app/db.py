@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 from .config import (
     DATABASE_BACKEND,
@@ -95,7 +95,9 @@ class ConnectionAdapter:
             cursor.execute(query, tuple(params))
 
         lastrowid = getattr(cursor, "lastrowid", None)
-        if self._backend == "postgresql" and query.lstrip().lower().startswith("insert"):
+        if self._backend == "postgresql" and query.lstrip().lower().startswith(
+            "insert"
+        ):
             # Preserve sqlite-style cursor.lastrowid semantics used throughout repository code.
             try:
                 id_cursor = self._raw.cursor()
@@ -138,7 +140,9 @@ def get_connection() -> Iterator[ConnectionAdapter]:
             raise RuntimeError(
                 "CITYSORT_DATABASE_URL targets PostgreSQL but psycopg2 is unavailable."
             ) from exc
-        raw = psycopg2.connect(DATABASE_URL, connect_timeout=DATABASE_CONNECT_TIMEOUT_SECONDS)
+        raw = psycopg2.connect(
+            DATABASE_URL, connect_timeout=DATABASE_CONNECT_TIMEOUT_SECONDS
+        )
         raw.autocommit = False
         connection = ConnectionAdapter(raw, backend="postgresql")
     else:
@@ -450,7 +454,9 @@ def _create_tables(connection: ConnectionAdapter) -> None:
     )
 
     # Idempotent seed templates.
-    template_count_row = connection.execute("SELECT COUNT(*) AS c FROM templates").fetchone()
+    template_count_row = connection.execute(
+        "SELECT COUNT(*) AS c FROM templates"
+    ).fetchone()
     template_count = int(template_count_row["c"]) if template_count_row else 0
     if template_count == 0:
         from datetime import datetime, timezone
@@ -487,7 +493,9 @@ def _create_tables(connection: ConnectionAdapter) -> None:
 def _run_safe_migrations(connection: ConnectionAdapter) -> None:
     deployment_columns = _table_columns(connection, "deployments")
     if "provider" not in deployment_columns:
-        connection.execute("ALTER TABLE deployments ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'")
+        connection.execute(
+            "ALTER TABLE deployments ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'"
+        )
     if "external_id" not in deployment_columns:
         connection.execute("ALTER TABLE deployments ADD COLUMN external_id TEXT")
 

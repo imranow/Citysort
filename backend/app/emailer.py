@@ -1,4 +1,5 @@
 """SMTP email delivery helper."""
+
 from __future__ import annotations
 
 import smtplib
@@ -36,13 +37,17 @@ def send_email(*, to_email: str, subject: str, body: str) -> None:
     msg.set_content(body)
 
     if SMTP_USE_SSL:
-        with smtplib.SMTP_SSL(host=SMTP_HOST, port=SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
+        with smtplib.SMTP_SSL(
+            host=SMTP_HOST, port=SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS
+        ) as server:
             if SMTP_USERNAME:
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.send_message(msg)
         return
 
-    with smtplib.SMTP(host=SMTP_HOST, port=SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
+    with smtplib.SMTP(
+        host=SMTP_HOST, port=SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS
+    ) as server:
         if SMTP_USE_TLS:
             server.starttls()
         if SMTP_USERNAME:

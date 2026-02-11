@@ -1,4 +1,5 @@
 """Notification creation, listing, and webhook dispatch."""
+
 from __future__ import annotations
 
 import json
@@ -70,7 +71,9 @@ def count_unread(*, user_id: Optional[str] = None) -> int:
     return int(row["total"]) if row else 0
 
 
-def mark_read(notification_id: int, *, user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+def mark_read(
+    notification_id: int, *, user_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
     read_at = utcnow_iso()
     query = "UPDATE notifications SET is_read = 1, read_at = ? WHERE id = ?"
     params: list[Any] = [read_at, notification_id]

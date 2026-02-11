@@ -1,7 +1,7 @@
 """Salesforce connector — pull attachments from Salesforce records via OAuth 2.0."""
+
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -30,7 +30,10 @@ def _get_access_token(config: dict[str, Any]) -> tuple[str, str]:
             "password": config["password"],
         }
     ).encode("utf-8")
-    headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
     data = http_json(token_url, method="POST", headers=headers, body=body, timeout=15)
     access_token = data.get("access_token")
     instance_url = data.get("instance_url", config["instance_url"].rstrip("/"))
@@ -44,14 +47,27 @@ class SalesforceConnector(BaseConnector):
     connector_type = "salesforce"
 
     def test_connection(self, config: dict[str, Any]) -> tuple[bool, str]:
-        for key in ("instance_url", "client_id", "client_secret", "username", "password"):
+        for key in (
+            "instance_url",
+            "client_id",
+            "client_secret",
+            "username",
+            "password",
+        ):
             if not config.get(key, "").strip():
                 return False, f"Missing required field: {key}"
         try:
             token, inst = _get_access_token(config)
             # Test query
             url = f"{inst}/services/data/{_API_VERSION}/query?q=SELECT+Id+FROM+Account+LIMIT+1"
-            http_json(url, headers={"Authorization": bearer_auth_header(token), "Accept": "application/json"}, timeout=15)
+            http_json(
+                url,
+                headers={
+                    "Authorization": bearer_auth_header(token),
+                    "Accept": "application/json",
+                },
+                timeout=15,
+            )
             return True, "Successfully connected to Salesforce."
         except ConnectorError as exc:
             return False, f"Connection failed: {exc}"
@@ -60,7 +76,10 @@ class SalesforceConnector(BaseConnector):
         self, config: dict[str, Any], limit: int = 50
     ) -> list[ExternalDocument]:
         token, inst = _get_access_token(config)
-        headers = {"Authorization": bearer_auth_header(token), "Accept": "application/json"}
+        headers = {
+            "Authorization": bearer_auth_header(token),
+            "Accept": "application/json",
+        }
 
         # Query recent attachments (classic Attachment object)
         soql = (

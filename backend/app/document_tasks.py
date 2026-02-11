@@ -40,7 +40,9 @@ def process_document_by_id(
             created_at_raw = document.get("created_at")
             if created_at_raw:
                 try:
-                    created_at = datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+                    created_at = datetime.fromisoformat(
+                        str(created_at_raw).replace("Z", "+00:00")
+                    )
                     if created_at.tzinfo is None:
                         created_at = created_at.replace(tzinfo=timezone.utc)
                 except ValueError:
@@ -83,6 +85,7 @@ def process_document_by_id(
         if result["requires_review"]:
             try:
                 from .notifications import create_notification
+
                 create_notification(
                     type="needs_review",
                     title=f"Review needed: {document.get('filename', 'Unknown')}",
@@ -95,6 +98,7 @@ def process_document_by_id(
         # --- Automatic outbound emails (never block pipeline) ---
         try:
             from .auto_emails import send_auto_acknowledgment, send_auto_missing_info
+
             send_auto_acknowledgment(document_id)
             if result.get("missing_fields"):
                 send_auto_missing_info(document_id)
@@ -102,7 +106,9 @@ def process_document_by_id(
             pass  # Auto-email failure must not block pipeline.
 
     except Exception as exc:  # pragma: no cover - runtime safeguard
-        update_document(document_id, updates={"status": "failed", "requires_review": True})
+        update_document(
+            document_id, updates={"status": "failed", "requires_review": True}
+        )
         create_audit_event(
             document_id=document_id,
             action="pipeline_failed",

@@ -53,19 +53,28 @@ def test_connect_and_fetch_import_rows_from_sqlite(tmp_path) -> None:
     assert len(rows) == 2
     assert get_row_value(rows[0], "filename") == "alpha.txt"
     assert get_row_value(rows[1], "content_type") == "text/plain"
-    assert coerce_row_content_to_bytes(get_row_value(rows[0], "content")) == b"hello world"
+    assert (
+        coerce_row_content_to_bytes(get_row_value(rows[0], "content")) == b"hello world"
+    )
 
 
 def test_get_row_value_handles_case_insensitive_column_names(tmp_path) -> None:
     source_db = tmp_path / "case_test.db"
     connection = sqlite3.connect(source_db)
     connection.execute("CREATE TABLE docs (FileName TEXT, Content BLOB)")
-    connection.execute("INSERT INTO docs (FileName, Content) VALUES (?, ?)", ("Case.TXT", b"Case content"))
+    connection.execute(
+        "INSERT INTO docs (FileName, Content) VALUES (?, ?)",
+        ("Case.TXT", b"Case content"),
+    )
     connection.commit()
     connection.close()
 
     import_connection = connect_external_database(str(source_db))
-    rows = fetch_import_rows(connection=import_connection, query="SELECT FileName, Content FROM docs", limit=1)
+    rows = fetch_import_rows(
+        connection=import_connection,
+        query="SELECT FileName, Content FROM docs",
+        limit=1,
+    )
     import_connection.close()
 
     assert get_row_value(rows[0], "filename") == "Case.TXT"
@@ -98,5 +107,9 @@ class _FakeConnection:
 
 
 def test_fetch_import_rows_normalizes_tuple_rows() -> None:
-    rows = fetch_import_rows(connection=_FakeConnection(), query="SELECT filename, content FROM sample", limit=1)
+    rows = fetch_import_rows(
+        connection=_FakeConnection(),
+        query="SELECT filename, content FROM sample",
+        limit=1,
+    )
     assert rows == [{"filename": "row1.txt", "content": b"a"}]

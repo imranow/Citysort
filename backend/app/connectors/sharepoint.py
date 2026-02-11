@@ -1,7 +1,7 @@
 """SharePoint Online connector — pull files from a SharePoint document library via OAuth 2.0."""
+
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
@@ -38,7 +38,10 @@ def _get_access_token(config: dict[str, Any]) -> str:
             "scope": scope,
         }
     ).encode("utf-8")
-    headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
     data = http_json(token_url, method="POST", headers=headers, body=body, timeout=15)
     token = data.get("access_token")
     if not token:

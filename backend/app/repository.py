@@ -64,7 +64,9 @@ def create_document(*, document: dict[str, Any]) -> dict[str, Any]:
     }
 
     columns = list(payload.keys())
-    serialized_values = [_serialize_value(column, payload[column]) for column in columns]
+    serialized_values = [
+        _serialize_value(column, payload[column]) for column in columns
+    ]
     placeholders = ", ".join("?" for _ in columns)
 
     with get_connection() as connection:
@@ -72,14 +74,18 @@ def create_document(*, document: dict[str, Any]) -> dict[str, Any]:
             f"INSERT INTO documents ({', '.join(columns)}) VALUES ({placeholders})",
             serialized_values,
         )
-        row = connection.execute("SELECT * FROM documents WHERE id = ?", (payload["id"],)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM documents WHERE id = ?", (payload["id"],)
+        ).fetchone()
 
     return _deserialize_row(row)
 
 
 def get_document(document_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as connection:
-        row = connection.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM documents WHERE id = ?", (document_id,)
+        ).fetchone()
 
     return _deserialize_row(row) if row else None
 
@@ -98,7 +104,9 @@ def list_documents(
     if status:
         if status == "overdue":
             conditions.append("due_date IS NOT NULL AND due_date < ?")
-            conditions.append("status NOT IN ('approved', 'corrected', 'completed', 'archived')")
+            conditions.append(
+                "status NOT IN ('approved', 'corrected', 'completed', 'archived')"
+            )
             params.append(utcnow_iso())
         else:
             conditions.append("status = ?")
@@ -124,7 +132,9 @@ def list_documents(
     return [_deserialize_row(row) for row in rows]
 
 
-def update_document(document_id: str, *, updates: dict[str, Any]) -> Optional[dict[str, Any]]:
+def update_document(
+    document_id: str, *, updates: dict[str, Any]
+) -> Optional[dict[str, Any]]:
     if not updates:
         return get_document(document_id)
 
@@ -137,12 +147,16 @@ def update_document(document_id: str, *, updates: dict[str, Any]) -> Optional[di
 
     with get_connection() as connection:
         connection.execute(f"UPDATE documents SET {assignments} WHERE id = ?", values)
-        row = connection.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM documents WHERE id = ?", (document_id,)
+        ).fetchone()
 
     return _deserialize_row(row) if row else None
 
 
-def create_audit_event(*, document_id: str, action: str, actor: str, details: Optional[str] = None) -> None:
+def create_audit_event(
+    *, document_id: str, action: str, actor: str, details: Optional[str] = None
+) -> None:
     with get_connection() as connection:
         connection.execute(
             """
@@ -223,7 +237,9 @@ def get_analytics_snapshot() -> dict[str, Any]:
                     "needs_review": totals["needs_review"] or 0,
                     "routed_or_approved": totals["routed_or_approved"] or 0,
                     "automated_documents": totals["automated_documents"] or 0,
-                    "average_confidence": round(float(totals["average_confidence"] or 0.0), 4),
+                    "average_confidence": round(
+                        float(totals["average_confidence"] or 0.0), 4
+                    ),
                 }
             )
 
@@ -272,7 +288,11 @@ def get_analytics_snapshot() -> dict[str, Any]:
             """
         ).fetchall()
         for row in contact_rows:
-            raw = row["extracted_fields"] if isinstance(row, dict) or hasattr(row, "__getitem__") else None
+            raw = (
+                row["extracted_fields"]
+                if isinstance(row, dict) or hasattr(row, "__getitem__")
+                else None
+            )
             fields: dict[str, Any]
             try:
                 fields = json.loads(raw) if raw else {}
@@ -295,20 +315,28 @@ def get_analytics_snapshot() -> dict[str, Any]:
                 "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
                 (today_start,),
             ).fetchone()
-            analytics["emails_sent_today"] = int(emails_today_row["total"]) if emails_today_row else 0
+            analytics["emails_sent_today"] = (
+                int(emails_today_row["total"]) if emails_today_row else 0
+            )
         except Exception:
             analytics["emails_sent_today"] = 0
 
     analytics["by_type"] = [dict(row) for row in by_type_rows]
     analytics["by_status"] = [dict(row) for row in by_status_rows]
     analytics["overdue"] = int(overdue_row["total"]) if overdue_row else 0
-    analytics["manual_unassigned"] = int(manual_unassigned_row["total"]) if manual_unassigned_row else 0
+    analytics["manual_unassigned"] = (
+        int(manual_unassigned_row["total"]) if manual_unassigned_row else 0
+    )
     total_documents = int(analytics["total_documents"] or 0)
     automated_documents = int(analytics["automated_documents"] or 0)
     manual_documents = max(total_documents - automated_documents, 0)
     analytics["manual_documents"] = manual_documents
-    analytics["automation_rate"] = round((automated_documents / total_documents), 4) if total_documents else 0.0
-    analytics["manual_rate"] = round((manual_documents / total_documents), 4) if total_documents else 0.0
+    analytics["automation_rate"] = (
+        round((automated_documents / total_documents), 4) if total_documents else 0.0
+    )
+    analytics["manual_rate"] = (
+        round((manual_documents / total_documents), 4) if total_documents else 0.0
+    )
 
     return analytics
 
@@ -361,7 +389,17 @@ def create_deployment(
             INSERT INTO deployments (environment, provider, status, actor, notes, details, external_id, created_at, finished_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (environment, provider, status, actor, notes, details, external_id, created_at, finished_at),
+            (
+                environment,
+                provider,
+                status,
+                actor,
+                notes,
+                details,
+                external_id,
+                created_at,
+                finished_at,
+            ),
         )
         row = connection.execute(
             """
@@ -453,7 +491,9 @@ def create_api_key(*, name: str, actor: str) -> tuple[dict[str, Any], str]:
     return dict(row), plain_key
 
 
-def list_api_keys(*, include_revoked: bool = False, limit: int = 100) -> list[dict[str, Any]]:
+def list_api_keys(
+    *, include_revoked: bool = False, limit: int = 100
+) -> list[dict[str, Any]]:
     query = """
         SELECT id, name, key_prefix, status, actor, created_at, revoked_at
         FROM api_keys
@@ -517,7 +557,9 @@ def create_invitation(
     token = secrets.token_urlsafe(24)
     token_hash = _hash_secret(token)
     created_at = utcnow_iso()
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=expires_in_days)).isoformat()
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+    ).isoformat()
 
     with get_connection() as connection:
         cursor = connection.execute(
@@ -539,7 +581,9 @@ def create_invitation(
     return dict(row), token
 
 
-def list_invitations(*, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+def list_invitations(
+    *, status: Optional[str] = None, limit: int = 100
+) -> list[dict[str, Any]]:
     query = """
         SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
         FROM invitations
@@ -607,8 +651,12 @@ def create_user(
     return dict(row)
 
 
-def get_user_by_email(email: str, *, include_password_hash: bool = False) -> Optional[dict[str, Any]]:
-    select_fields = "id, email, full_name, role, status, last_login_at, created_at, updated_at"
+def get_user_by_email(
+    email: str, *, include_password_hash: bool = False
+) -> Optional[dict[str, Any]]:
+    select_fields = (
+        "id, email, full_name, role, status, last_login_at, created_at, updated_at"
+    )
     if include_password_hash:
         select_fields = f"{select_fields}, password_hash"
 
@@ -717,11 +765,15 @@ def create_job(
 
 def get_job(job_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as connection:
-        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
     return _deserialize_job(row) if row else None
 
 
-def list_jobs(*, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+def list_jobs(
+    *, status: Optional[str] = None, limit: int = 100
+) -> list[dict[str, Any]]:
     query = "SELECT * FROM jobs"
     params: list[Any] = []
     if status:
@@ -766,7 +818,9 @@ def claim_next_job(*, worker_id: str) -> Optional[dict[str, Any]]:
         if updated.rowcount != 1:
             return None
 
-        claimed = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        claimed = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
     return _deserialize_job(claimed) if claimed else None
 
 
@@ -787,7 +841,9 @@ def claim_job_by_id(*, job_id: str, worker_id: str) -> Optional[dict[str, Any]]:
         )
         if updated.rowcount != 1:
             return None
-        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
     return _deserialize_job(row) if row else None
 
 
@@ -805,7 +861,9 @@ def complete_job(*, job_id: str, result: dict[str, Any]) -> Optional[dict[str, A
             """,
             (json.dumps(result), finished_at, job_id),
         )
-        row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
     return _deserialize_job(row) if row else None
 
 
@@ -825,11 +883,6 @@ def fail_job(*, job_id: str, error: str) -> Optional[dict[str, Any]]:
 
         should_retry = int(row["attempts"]) < int(row["max_attempts"])
         status = "queued" if should_retry else "failed"
-        started_at = None if should_retry else connection.execute(
-            "SELECT started_at FROM jobs WHERE id = ?",
-            (job_id,),
-        ).fetchone()["started_at"]
-
         connection.execute(
             """
             UPDATE jobs
@@ -839,9 +892,17 @@ def fail_job(*, job_id: str, error: str) -> Optional[dict[str, Any]]:
                 started_at = CASE WHEN ? THEN NULL ELSE started_at END
             WHERE id = ?
             """,
-            (status, error, finished_at if not should_retry else None, 1 if should_retry else 0, job_id),
+            (
+                status,
+                error,
+                finished_at if not should_retry else None,
+                1 if should_retry else 0,
+                job_id,
+            ),
         )
-        updated = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        updated = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
     return _deserialize_job(updated) if updated else None
 
 
@@ -932,7 +993,17 @@ def create_outbound_email(
             INSERT INTO outbound_emails (document_id, to_email, subject, body, status, provider, error, created_at, sent_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (document_id, to_email, subject, body, status, provider, error, created_at, sent_at),
+            (
+                document_id,
+                to_email,
+                subject,
+                body,
+                status,
+                provider,
+                error,
+                created_at,
+                sent_at,
+            ),
         )
         row = connection.execute(
             "SELECT * FROM outbound_emails WHERE id = ?",

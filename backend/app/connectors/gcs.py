@@ -1,9 +1,8 @@
 """Google Cloud Storage connector — pull files from a GCS bucket using service account JWT auth."""
+
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import time
 from typing import Any, Optional
@@ -37,7 +36,9 @@ def _get_access_token(service_account_key: str) -> str:
     private_key_pem = sa.get("private_key", "")
     client_email = sa.get("client_email", "")
     if not private_key_pem or not client_email:
-        raise ConnectorError("Service account key must contain 'private_key' and 'client_email'.")
+        raise ConnectorError(
+            "Service account key must contain 'private_key' and 'client_email'."
+        )
 
     now = int(time.time())
     header = _base64url_encode(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
@@ -60,7 +61,9 @@ def _get_access_token(service_account_key: str) -> str:
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import padding
 
-        private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode(), password=None
+        )
         signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
     except ImportError:
         # Fallback: try using subprocess with openssl
@@ -114,7 +117,9 @@ class GCSConnector(BaseConnector):
             token = _get_access_token(config["service_account_key"])
             bucket = config["bucket_name"]
             url = f"https://storage.googleapis.com/storage/v1/b/{bucket}?fields=name"
-            http_json(url, headers={"Authorization": bearer_auth_header(token)}, timeout=15)
+            http_json(
+                url, headers={"Authorization": bearer_auth_header(token)}, timeout=15
+            )
             return True, f"Successfully connected to GCS bucket '{bucket}'."
         except ConnectorError as exc:
             return False, f"Connection failed: {exc}"

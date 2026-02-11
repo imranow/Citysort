@@ -1,4 +1,5 @@
 """Automatic email triggers for document lifecycle events."""
+
 from __future__ import annotations
 
 import logging
@@ -11,7 +12,12 @@ from .config import (
 )
 from .emailer import email_configured, send_email
 from .notifications import create_notification
-from .repository import create_audit_event, create_outbound_email, get_document, update_outbound_email
+from .repository import (
+    create_audit_event,
+    create_outbound_email,
+    get_document,
+    update_outbound_email,
+)
 from .templates import compose_template_email, list_templates
 
 logger = logging.getLogger(__name__)
@@ -42,7 +48,9 @@ def _send_auto_email(
 
     template = _find_template_by_name(template_name_hint)
     if not template:
-        logger.debug("No template matching '%s' found; skipping auto email.", template_name_hint)
+        logger.debug(
+            "No template matching '%s' found; skipping auto email.", template_name_hint
+        )
         return False
 
     try:
@@ -74,7 +82,9 @@ def _send_auto_email(
         update_outbound_email(
             int(record["id"]),
             status="sent",
-            sent_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            sent_at=__import__("datetime")
+            .datetime.now(__import__("datetime").timezone.utc)
+            .isoformat(),
         )
         create_audit_event(
             document_id=document_id,
@@ -88,7 +98,9 @@ def _send_auto_email(
             message=f"Sent to {to_email}",
             document_id=document_id,
         )
-        logger.info("Auto %s email sent to %s for doc %s", email_type, to_email, document_id)
+        logger.info(
+            "Auto %s email sent to %s for doc %s", email_type, to_email, document_id
+        )
         return True
     except Exception as exc:
         update_outbound_email(int(record["id"]), status="failed", error=str(exc))

@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from .config import (
@@ -90,7 +90,10 @@ def _dequeue_redis_job(timeout_seconds: int) -> Optional[str]:
 
 
 def _has_recent_overdue_notification(document_id: str) -> bool:
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=OVERDUE_NOTIFICATION_LOOKBACK_MINUTES)).isoformat()
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(minutes=OVERDUE_NOTIFICATION_LOOKBACK_MINUTES)
+    ).isoformat()
     with get_connection() as connection:
         row = connection.execute(
             """
@@ -145,7 +148,9 @@ def _run_overdue_sla_scan() -> None:
             and str(assigned_to or "") != ESCALATION_FALLBACK_USER
         ):
             try:
-                update_document(document_id, updates={"assigned_to": ESCALATION_FALLBACK_USER})
+                update_document(
+                    document_id, updates={"assigned_to": ESCALATION_FALLBACK_USER}
+                )
                 create_audit_event(
                     document_id=document_id,
                     action="auto_escalated",
@@ -159,7 +164,12 @@ def _run_overdue_sla_scan() -> None:
                     user_id=ESCALATION_FALLBACK_USER,
                     document_id=document_id,
                 )
-                logger.info("Auto-escalated doc %s to %s (%dd overdue)", document_id, ESCALATION_FALLBACK_USER, days_late)
+                logger.info(
+                    "Auto-escalated doc %s to %s (%dd overdue)",
+                    document_id,
+                    ESCALATION_FALLBACK_USER,
+                    days_late,
+                )
             except Exception as exc:
                 logger.warning("Escalation failed for %s: %s", document_id, exc)
 
@@ -167,7 +177,9 @@ def _run_overdue_sla_scan() -> None:
 def _run_retention_cleanup() -> None:
     now = datetime.now(timezone.utc)
     audit_cutoff = (now - timedelta(days=AUDIT_RETENTION_DAYS)).isoformat()
-    notification_cutoff = (now - timedelta(days=NOTIFICATION_RETENTION_DAYS)).isoformat()
+    notification_cutoff = (
+        now - timedelta(days=NOTIFICATION_RETENTION_DAYS)
+    ).isoformat()
     email_cutoff = (now - timedelta(days=OUTBOUND_EMAIL_RETENTION_DAYS)).isoformat()
     removed_audits = purge_audit_events_before(audit_cutoff)
     removed_notifications = purge_notifications_before(notification_cutoff)
@@ -197,9 +209,15 @@ class DurableJobWorker:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, name=self.worker_id, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name=self.worker_id, daemon=True
+        )
         self._thread.start()
-        logger.info("Started durable job worker %s (queue_backend=%s)", self.worker_id, QUEUE_BACKEND)
+        logger.info(
+            "Started durable job worker %s (queue_backend=%s)",
+            self.worker_id,
+            QUEUE_BACKEND,
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -212,7 +230,9 @@ class DurableJobWorker:
         next_retention_cleanup_at = 0.0
         use_redis_queue = QUEUE_BACKEND == "redis" and _get_redis_client() is not None
         if QUEUE_BACKEND == "redis" and not use_redis_queue:
-            logger.warning("QUEUE_BACKEND=redis but Redis is unavailable. Falling back to DB polling queue.")
+            logger.warning(
+                "QUEUE_BACKEND=redis but Redis is unavailable. Falling back to DB polling queue."
+            )
         if use_redis_queue:
             for queued in list_jobs(status="queued", limit=1000):
                 job_id = str(queued.get("id", "")).strip()
@@ -234,7 +254,9 @@ class DurableJobWorker:
                 next_retention_cleanup_at = now + RETENTION_CLEANUP_INTERVAL_SECONDS
 
             if use_redis_queue:
-                job_id = _dequeue_redis_job(timeout_seconds=WORKER_POLL_INTERVAL_SECONDS)
+                job_id = _dequeue_redis_job(
+                    timeout_seconds=WORKER_POLL_INTERVAL_SECONDS
+                )
                 if not job_id:
                     continue
                 job = claim_job_by_id(job_id=job_id, worker_id=self.worker_id)
@@ -250,7 +272,10 @@ class DurableJobWorker:
             payload = job.get("payload", {}) or {}
             handler = self._handlers.get(job_type)
             if not handler:
-                fail_job(job_id=job_id, error=f"No registered handler for job_type='{job_type}'")
+                fail_job(
+                    job_id=job_id,
+                    error=f"No registered handler for job_type='{job_type}'",
+                )
                 continue
 
             try:
@@ -286,7 +311,9 @@ def stop_job_worker() -> None:
     _worker.stop()
 
 
-def enqueue_document_processing(*, document_id: str, actor: str, max_attempts: int = WORKER_MAX_ATTEMPTS) -> dict[str, Any]:
+def enqueue_document_processing(
+    *, document_id: str, actor: str, max_attempts: int = WORKER_MAX_ATTEMPTS
+) -> dict[str, Any]:
     job = create_job(
         job_type="process_document",
         payload={"document_id": document_id, "actor": actor},
@@ -295,7 +322,10 @@ def enqueue_document_processing(*, document_id: str, actor: str, max_attempts: i
     )
     if QUEUE_BACKEND == "redis":
         if not _enqueue_redis_job(str(job.get("id", ""))):
-            logger.warning("Failed to enqueue job %s to Redis; it remains queued in DB.", job.get("id"))
+            logger.warning(
+                "Failed to enqueue job %s to Redis; it remains queued in DB.",
+                job.get("id"),
+            )
     return job
 
 

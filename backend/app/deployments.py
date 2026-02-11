@@ -43,7 +43,9 @@ def deployment_provider_health() -> dict[str, Any]:
         }
 
     if provider == "render":
-        configured = bool(RENDER_DEPLOY_HOOK_URL or (RENDER_API_TOKEN and RENDER_SERVICE_ID))
+        configured = bool(
+            RENDER_DEPLOY_HOOK_URL or (RENDER_API_TOKEN and RENDER_SERVICE_ID)
+        )
         return {
             "provider": "render",
             "status": "ok" if configured else "not_configured",
@@ -56,7 +58,13 @@ def deployment_provider_health() -> dict[str, Any]:
         }
 
     if provider == "github":
-        configured = bool(GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and GITHUB_WORKFLOW_ID and GITHUB_REF)
+        configured = bool(
+            GITHUB_TOKEN
+            and GITHUB_OWNER
+            and GITHUB_REPO
+            and GITHUB_WORKFLOW_ID
+            and GITHUB_REF
+        )
         return {
             "provider": "github",
             "status": "ok" if configured else "not_configured",
@@ -76,7 +84,9 @@ def deployment_provider_health() -> dict[str, Any]:
     }
 
 
-def trigger_manual_deployment(*, environment: str, actor: str, notes: Optional[str] = None) -> dict[str, Any]:
+def trigger_manual_deployment(
+    *, environment: str, actor: str, notes: Optional[str] = None
+) -> dict[str, Any]:
     provider = DEPLOY_PROVIDER
 
     if provider == "local":
@@ -89,7 +99,9 @@ def trigger_manual_deployment(*, environment: str, actor: str, notes: Optional[s
     raise DeploymentTriggerError(f"Unsupported deploy provider: {provider}")
 
 
-def _trigger_local(*, environment: str, actor: str, notes: Optional[str]) -> dict[str, Any]:
+def _trigger_local(
+    *, environment: str, actor: str, notes: Optional[str]
+) -> dict[str, Any]:
     if not DEPLOY_COMMAND:
         return {
             "provider": "local",
@@ -98,7 +110,9 @@ def _trigger_local(*, environment: str, actor: str, notes: Optional[str]) -> dic
             "external_id": None,
         }
 
-    command = DEPLOY_COMMAND.replace("{environment}", environment).replace("{actor}", actor)
+    command = DEPLOY_COMMAND.replace("{environment}", environment).replace(
+        "{actor}", actor
+    )
     if notes:
         command = command.replace("{notes}", notes)
 
@@ -118,12 +132,15 @@ def _trigger_local(*, environment: str, actor: str, notes: Optional[str]) -> dic
     return {
         "provider": "local",
         "status": status,
-        "details": output or f"Local deploy command exited with code {completed.returncode}.",
+        "details": output
+        or f"Local deploy command exited with code {completed.returncode}.",
         "external_id": None,
     }
 
 
-def _trigger_render(*, environment: str, actor: str, notes: Optional[str]) -> dict[str, Any]:
+def _trigger_render(
+    *, environment: str, actor: str, notes: Optional[str]
+) -> dict[str, Any]:
     if RENDER_DEPLOY_HOOK_URL:
         request = urllib.request.Request(url=RENDER_DEPLOY_HOOK_URL, method="POST")
         try:
@@ -134,7 +151,9 @@ def _trigger_render(*, environment: str, actor: str, notes: Optional[str]) -> di
             raise DeploymentTriggerError(f"Render hook request failed: {exc}")
 
         if status_code >= 300:
-            raise DeploymentTriggerError(f"Render hook responded with status {status_code}.")
+            raise DeploymentTriggerError(
+                f"Render hook responded with status {status_code}."
+            )
 
         return {
             "provider": "render",
@@ -187,8 +206,16 @@ def _trigger_render(*, environment: str, actor: str, notes: Optional[str]) -> di
     }
 
 
-def _trigger_github(*, environment: str, actor: str, notes: Optional[str]) -> dict[str, Any]:
-    if not (GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and GITHUB_WORKFLOW_ID and GITHUB_REF):
+def _trigger_github(
+    *, environment: str, actor: str, notes: Optional[str]
+) -> dict[str, Any]:
+    if not (
+        GITHUB_TOKEN
+        and GITHUB_OWNER
+        and GITHUB_REPO
+        and GITHUB_WORKFLOW_ID
+        and GITHUB_REF
+    ):
         raise DeploymentTriggerError(
             "GitHub provider requires CITYSORT_GITHUB_TOKEN/OWNER/REPO/WORKFLOW_ID/REF."
         )

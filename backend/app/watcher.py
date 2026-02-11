@@ -1,4 +1,5 @@
 """Watched folder ingestion service."""
+
 from __future__ import annotations
 
 import hashlib
@@ -100,11 +101,17 @@ class FolderWatcher:
         safe_filename = f"{document_id}_{file_path.name}"
         dest = upload_dir / safe_filename
         payload = file_path.read_bytes()
-        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        content_type = (
+            mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        )
         try:
-            validate_upload(filename=file_path.name, content_type=content_type, payload=payload)
+            validate_upload(
+                filename=file_path.name, content_type=content_type, payload=payload
+            )
         except UploadValidationError as exc:
-            logger.warning("Watcher skipped %s due to validation failure: %s", file_path, exc)
+            logger.warning(
+                "Watcher skipped %s due to validation failure: %s", file_path, exc
+            )
             return
         write_document_bytes(dest, payload)
 

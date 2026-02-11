@@ -52,7 +52,13 @@ def test_readyz_endpoint(client):
 def test_upload_document(client):
     resp = client.post(
         "/api/documents/upload",
-        files={"file": ("test.txt", b"Building Permit\nApplicant: Test User\nDate: 01/01/2026", "text/plain")},
+        files={
+            "file": (
+                "test.txt",
+                b"Building Permit\nApplicant: Test User\nDate: 01/01/2026",
+                "text/plain",
+            )
+        },
         data={"source_channel": "test", "process_async": "false"},
     )
     assert resp.status_code == 200

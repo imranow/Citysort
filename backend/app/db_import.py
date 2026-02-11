@@ -33,7 +33,9 @@ _MYSQL_SCHEMES = {"mysql", "mysql+pymysql"}
 
 def _strip_sql_comments(query: str) -> str:
     without_block_comments = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
-    without_line_comments = re.sub(r"--.*?$", " ", without_block_comments, flags=re.MULTILINE)
+    without_line_comments = re.sub(
+        r"--.*?$", " ", without_block_comments, flags=re.MULTILINE
+    )
     return without_line_comments
 
 
@@ -50,11 +52,15 @@ def validate_readonly_query(query: str) -> str:
         raise ExternalDatabaseError("Only one SELECT statement is allowed.")
 
     if not (normalized.startswith("select") or normalized.startswith("with")):
-        raise ExternalDatabaseError("Only SELECT queries are allowed for database imports.")
+        raise ExternalDatabaseError(
+            "Only SELECT queries are allowed for database imports."
+        )
 
     for keyword in _DISALLOWED_QUERY_KEYWORDS:
         if re.search(rf"\b{keyword}\b", normalized):
-            raise ExternalDatabaseError(f"Query contains a disallowed keyword: '{keyword}'.")
+            raise ExternalDatabaseError(
+                f"Query contains a disallowed keyword: '{keyword}'."
+            )
 
     return candidate
 
@@ -70,7 +76,9 @@ def _normalize_sqlite_target(database_url: str) -> str:
     elif lowered.startswith("sqlite://"):
         target = raw[len("sqlite://") :]
     elif "://" in raw:
-        raise ExternalDatabaseError("Only SQLite database URLs are currently supported.")
+        raise ExternalDatabaseError(
+            "Only SQLite database URLs are currently supported."
+        )
     else:
         target = raw
 
@@ -82,7 +90,9 @@ def _normalize_sqlite_target(database_url: str) -> str:
         return target
 
     if target == ":memory:":
-        raise ExternalDatabaseError("In-memory SQLite databases are not supported for imports.")
+        raise ExternalDatabaseError(
+            "In-memory SQLite databases are not supported for imports."
+        )
 
     resolved = Path(target).expanduser().resolve()
     if not resolved.exists():
@@ -125,7 +135,9 @@ def _connect_mysql(database_url: str) -> Any:
     try:
         import pymysql
     except Exception:
-        raise ExternalDatabaseError("MySQL driver is not installed. Install dependencies from backend/requirements.txt.")
+        raise ExternalDatabaseError(
+            "MySQL driver is not installed. Install dependencies from backend/requirements.txt."
+        )
 
     parsed = urlparse(database_url)
     if not parsed.hostname or not parsed.path.strip("/"):
@@ -172,10 +184,14 @@ def connect_external_database(database_url: str) -> Any:
     if scheme == "sqlite":
         return _connect_sqlite(raw)
 
-    raise ExternalDatabaseError("Unsupported database URL scheme. Supported: sqlite, postgresql, mysql.")
+    raise ExternalDatabaseError(
+        "Unsupported database URL scheme. Supported: sqlite, postgresql, mysql."
+    )
 
 
-def fetch_import_rows(*, connection: Any, query: str, limit: int) -> list[dict[str, Any]]:
+def fetch_import_rows(
+    *, connection: Any, query: str, limit: int
+) -> list[dict[str, Any]]:
     safe_query = validate_readonly_query(query)
     row_limit = max(1, int(limit))
     cursor = None
@@ -212,10 +228,14 @@ def fetch_import_rows(*, connection: Any, query: str, limit: int) -> list[dict[s
             continue
 
         if isinstance(row, (tuple, list)):
-            normalized_rows.append({name: value for name, value in zip(column_names, row)})
+            normalized_rows.append(
+                {name: value for name, value in zip(column_names, row)}
+            )
             continue
 
-        raise ExternalDatabaseError(f"Unsupported row type from database driver: {type(row).__name__}")
+        raise ExternalDatabaseError(
+            f"Unsupported row type from database driver: {type(row).__name__}"
+        )
 
     return normalized_rows
 

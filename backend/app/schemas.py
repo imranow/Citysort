@@ -106,7 +106,10 @@ class RulesConfigUpdate(BaseModel):
 
 
 class DatabaseImportRequest(BaseModel):
-    database_url: str = Field(..., description="Database URL (sqlite/postgresql/mysql) or sqlite filesystem path")
+    database_url: str = Field(
+        ...,
+        description="Database URL (sqlite/postgresql/mysql) or sqlite filesystem path",
+    )
     query: str = Field(..., description="SELECT query that returns file rows")
     filename_column: str = "filename"
     content_column: Optional[str] = "content"
@@ -314,6 +317,7 @@ class JobListResponse(BaseModel):
 
 # --- Notifications ---
 
+
 class NotificationRecord(BaseModel):
     id: int
     user_id: Optional[str] = None
@@ -333,6 +337,7 @@ class NotificationListResponse(BaseModel):
 
 # --- Workflow Transitions ---
 
+
 class TransitionRequest(BaseModel):
     status: str
     notes: Optional[str] = None
@@ -341,12 +346,14 @@ class TransitionRequest(BaseModel):
 
 # --- Assignment ---
 
+
 class AssignRequest(BaseModel):
     user_id: str
     actor: str = "dashboard_reviewer"
 
 
 # --- Response Templates ---
+
 
 class TemplateRecord(BaseModel):
     id: int
@@ -434,6 +441,7 @@ class AutomationAnthropicSweepResponse(BaseModel):
 
 # --- Bulk Operations ---
 
+
 class BulkActionRequest(BaseModel):
     action: str
     document_ids: list[str]
@@ -448,6 +456,7 @@ class BulkActionResponse(BaseModel):
 
 
 # --- Connector Import ---
+
 
 class ConnectorConfigSaveRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)

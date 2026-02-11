@@ -1,4 +1,5 @@
 """Base connector class and shared types for all CitySort connectors."""
+
 from __future__ import annotations
 
 import base64

@@ -1,4 +1,5 @@
 """Confluence Cloud connector — pull attachments from wiki pages."""
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -63,14 +64,14 @@ class ConfluenceConnector(BaseConnector):
         for page in pages:
             page_title = page.get("title", "")
             attachments = (
-                page.get("children", {})
-                .get("attachment", {})
-                .get("results", [])
+                page.get("children", {}).get("attachment", {}).get("results", [])
             )
 
             # If no inline attachments, fetch explicitly
             if not attachments:
-                att_url = f"{base}/rest/api/content/{page['id']}/child/attachment?limit=50"
+                att_url = (
+                    f"{base}/rest/api/content/{page['id']}/child/attachment?limit=50"
+                )
                 try:
                     att_data = http_json(att_url, headers=headers)
                     attachments = att_data.get("results", [])
@@ -84,7 +85,9 @@ class ConfluenceConnector(BaseConnector):
                         external_id=f"conf_{att.get('id', '')}",
                         filename=att.get("title", "attachment"),
                         content_type=att.get("mediaType"),
-                        download_url=f"{base}{download_path}" if download_path else None,
+                        download_url=f"{base}{download_path}"
+                        if download_path
+                        else None,
                         size_bytes=att.get("extensions", {}).get("fileSize"),
                         metadata={
                             "page_id": page.get("id", ""),

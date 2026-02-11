@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.security import SlidingWindowRateLimiter, UploadValidationError, validate_upload
+from app.security import (
+    SlidingWindowRateLimiter,
+    UploadValidationError,
+    validate_upload,
+)
 
 
 def test_rate_limiter_blocks_after_limit() -> None:
@@ -20,7 +24,11 @@ def test_upload_validation_rejects_disallowed_extension(monkeypatch) -> None:
 
     monkeypatch.setattr(security, "UPLOAD_ALLOWED_EXTENSIONS", {"txt"})
     with pytest.raises(UploadValidationError):
-        validate_upload(filename="malware.exe", content_type="application/octet-stream", payload=b"abc")
+        validate_upload(
+            filename="malware.exe",
+            content_type="application/octet-stream",
+            payload=b"abc",
+        )
 
 
 def test_upload_validation_allows_expected_text(monkeypatch) -> None:

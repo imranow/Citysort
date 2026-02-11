@@ -28,11 +28,11 @@ def test_platform_connectivity_check(isolated_app) -> None:
 
 
 def test_manual_deployment_and_history(isolated_app) -> None:
-    created = (
-        isolated_app.run_manual_deployment(
-            isolated_app.ManualDeploymentRequest(environment="staging", actor="test_user", notes="release candidate")
-        ).model_dump()
-    )
+    created = isolated_app.run_manual_deployment(
+        isolated_app.ManualDeploymentRequest(
+            environment="staging", actor="test_user", notes="release candidate"
+        )
+    ).model_dump()
     assert created["environment"] == "staging"
     assert created["status"] == "completed"
 
@@ -79,22 +79,32 @@ def test_invitation_and_api_key_lifecycle(isolated_app) -> None:
 
     key_id = key_payload["api_key"]["id"]
 
-    active_items = isolated_app.get_platform_api_keys(include_revoked=False, limit=100).model_dump()["items"]
+    active_items = isolated_app.get_platform_api_keys(
+        include_revoked=False, limit=100
+    ).model_dump()["items"]
     assert any(item["id"] == key_id for item in active_items)
 
     revoked = isolated_app.revoke_platform_api_key(key_id=key_id).model_dump()
     assert revoked["status"] == "revoked"
 
-    revoked_items = isolated_app.get_platform_api_keys(include_revoked=True, limit=100).model_dump()["items"]
-    assert any(item["id"] == key_id and item["status"] == "revoked" for item in revoked_items)
+    revoked_items = isolated_app.get_platform_api_keys(
+        include_revoked=True, limit=100
+    ).model_dump()["items"]
+    assert any(
+        item["id"] == key_id and item["status"] == "revoked" for item in revoked_items
+    )
 
 
 def test_platform_summary_counts(isolated_app) -> None:
     isolated_app.create_platform_invitation(
-        isolated_app.InvitationCreateRequest(email="one@example.com", role="member", actor="admin"),
+        isolated_app.InvitationCreateRequest(
+            email="one@example.com", role="member", actor="admin"
+        ),
         _build_request(),
     )
-    isolated_app.create_platform_api_key(isolated_app.ApiKeyCreateRequest(name="ops-key", actor="admin"))
+    isolated_app.create_platform_api_key(
+        isolated_app.ApiKeyCreateRequest(name="ops-key", actor="admin")
+    )
 
     payload = isolated_app.get_platform_summary().model_dump()
     assert payload["active_api_keys"] >= 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import logging
 import mimetypes
 import re
@@ -10,7 +11,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -60,9 +61,20 @@ from .db_import import (
 from .db import get_connection, init_db
 from .deployments import deployment_provider_health, trigger_manual_deployment
 from .emailer import email_configured, send_email
-from .jobs import enqueue_document_processing, get_job_by_id, get_jobs, start_job_worker, stop_job_worker
+from .jobs import (
+    enqueue_document_processing,
+    get_job_by_id,
+    get_jobs,
+    start_job_worker,
+    stop_job_worker,
+)
 from .logging_setup import configure_logging
-from .observability import init_observability, metrics_response, observe_request, start_timer
+from .observability import (
+    init_observability,
+    metrics_response,
+    observe_request,
+    start_timer,
+)
 from .document_tasks import process_document_by_id
 from .pipeline import route_document
 from .repository import (
@@ -116,11 +128,24 @@ from .security import (
     should_block_insecure_request,
     validate_upload,
 )
-from .storage import read_document_bytes, validate_encryption_configuration, write_document_bytes
-from .connectors.base import ConnectorError, get_connector, list_connector_types
+from .storage import (
+    read_document_bytes,
+    validate_encryption_configuration,
+    write_document_bytes,
+)
+from .connectors.base import ConnectorError, get_connector
 from .connectors.importer import import_from_connector, get_sync_count
+
 # Register all connectors so they are available via get_connector()
-from .connectors import servicenow, confluence, salesforce, gcs, s3, jira_connector, sharepoint  # noqa: F401
+from .connectors import (  # noqa: F401
+    servicenow,
+    confluence,
+    salesforce,
+    gcs,
+    s3,
+    jira_connector,
+    sharepoint,
+)
 from .schemas import (
     AnalyticsResponse,
     AutomationAnthropicSweepRequest,
@@ -186,10 +211,65 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
+
+def _startup_initialize() -> None:
+    init_observability()
+    if STRICT_APPROVAL_ROLE and STRICT_APPROVAL_ROLE not in {
+        "viewer",
+        "operator",
+        "admin",
+    }:
+        raise RuntimeError(
+            "CITYSORT_STRICT_APPROVAL_ROLE must be one of: viewer, operator, admin."
+        )
+    if STRICT_AUTH_SECRET and (REQUIRE_AUTH or IS_PRODUCTION):
+        if AUTH_SECRET.strip().lower() in AUTH_SECRET_PLACEHOLDER_VALUES:
+            raise RuntimeError(
+                "CITYSORT_AUTH_SECRET must be set to a strong secret for authenticated/production mode."
+            )
+    validate_encryption_configuration()
+    if IS_PRODUCTION:
+        if not ENFORCE_HTTPS:
+            logger.warning(
+                "CITYSORT_ENFORCE_HTTPS is disabled in production — HTTPS strongly recommended."
+            )
+        if not CORS_ALLOWED_ORIGINS or CORS_ALLOWED_ORIGINS == [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]:
+            logger.warning(
+                "CITYSORT_CORS_ALLOWED_ORIGINS uses default localhost values in production — update to actual domain(s)."
+            )
+        if not TRUSTED_HOSTS or TRUSTED_HOSTS == ["localhost", "127.0.0.1"]:
+            logger.warning(
+                "CITYSORT_TRUSTED_HOSTS uses default localhost values in production — update to actual hostname(s)."
+            )
+    elif ENFORCE_HTTPS:
+        logger.warning("CITYSORT_ENFORCE_HTTPS=true in development mode.")
+    init_db()
+    start_job_worker()
+    start_watcher()
+
+
+def _shutdown_cleanup() -> None:
+    stop_job_worker()
+    stop_watcher()
+
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    _startup_initialize()
+    try:
+        yield
+    finally:
+        _shutdown_cleanup()
+
+
 app = FastAPI(
     title="CitySort AI MVP",
     description="AI-powered document intake, classification, and routing for local government.",
     version="0.1.0",
+    lifespan=app_lifespan,
 )
 
 app.add_middleware(
@@ -210,7 +290,9 @@ _rate_limiter = SlidingWindowRateLimiter()
 
 def _rate_limit_scope(path: str) -> tuple[str, int]:
     normalized = str(path or "").strip().lower()
-    if normalized.startswith("/api/documents/upload") or normalized.startswith("/api/documents/import"):
+    if normalized.startswith("/api/documents/upload") or normalized.startswith(
+        "/api/documents/import"
+    ):
         return "upload", RATE_LIMIT_UPLOAD_PER_WINDOW
     if (
         normalized.startswith("/api/automation/")
@@ -256,7 +338,12 @@ async def secure_request_middleware(request: Request, call_next):
             response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
             response.headers["X-Request-ID"] = request_id
             apply_security_headers(response)
-            observe_request(method=request.method, path=path, status_code=response.status_code, started_at=started)
+            observe_request(
+                method=request.method,
+                path=path,
+                status_code=response.status_code,
+                started_at=started,
+            )
             logger.warning(
                 "rate_limited method=%s path=%s ip=%s window=%ss limit=%s",
                 request.method,
@@ -278,7 +365,9 @@ async def secure_request_middleware(request: Request, call_next):
             source_ip,
             extra={"request_id": request_id},
         )
-        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        response = JSONResponse(
+            status_code=500, content={"detail": "Internal server error"}
+        )
 
     response.headers["X-Request-ID"] = request_id
     if rate_decision is not None:
@@ -286,7 +375,12 @@ async def secure_request_middleware(request: Request, call_next):
         response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
         response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
     apply_security_headers(response)
-    observe_request(method=request.method, path=path, status_code=response.status_code, started_at=started)
+    observe_request(
+        method=request.method,
+        path=path,
+        status_code=response.status_code,
+        started_at=started,
+    )
     logger.info(
         "request_complete method=%s path=%s status=%s ip=%s",
         request.method,
@@ -296,6 +390,7 @@ async def secure_request_middleware(request: Request, call_next):
         extra={"request_id": request_id},
     )
     return response
+
 
 def _coerce_optional_text(value: object | None) -> Optional[str]:
     if value is None:
@@ -321,9 +416,16 @@ def _database_health() -> ServiceHealth:
     try:
         with get_connection() as connection:
             connection.execute("SELECT 1").fetchone()
-        return ServiceHealth(name="database", status="ok", configured=True, details="Database connection succeeded.")
+        return ServiceHealth(
+            name="database",
+            status="ok",
+            configured=True,
+            details="Database connection succeeded.",
+        )
     except Exception as exc:  # pragma: no cover - runtime safeguard
-        return ServiceHealth(name="database", status="error", configured=False, details=str(exc))
+        return ServiceHealth(
+            name="database", status="error", configured=False, details=str(exc)
+        )
 
 
 def _ocr_provider_health() -> ServiceHealth:
@@ -377,7 +479,9 @@ def _classifier_provider_health() -> ServiceHealth:
             name="classifier",
             status="ok" if configured else "not_configured",
             configured=configured,
-            details="OpenAI classifier configured." if configured else "Missing OPENAI_API_KEY.",
+            details="OpenAI classifier configured."
+            if configured
+            else "Missing OPENAI_API_KEY.",
         )
 
     if provider == "anthropic":
@@ -388,7 +492,9 @@ def _classifier_provider_health() -> ServiceHealth:
             name="classifier",
             status="ok" if configured else "not_configured",
             configured=configured,
-            details="Anthropic classifier configured." if configured else "Missing ANTHROPIC_API_KEY.",
+            details="Anthropic classifier configured."
+            if configured
+            else "Missing ANTHROPIC_API_KEY.",
         )
 
     return ServiceHealth(
@@ -415,30 +521,6 @@ def _connectivity_snapshot() -> ConnectivityResponse:
         deployment_provider=deploy_health,
         checked_at=_utcnow_iso(),
     )
-
-
-@app.on_event("startup")
-def startup_event() -> None:
-    init_observability()
-    if STRICT_APPROVAL_ROLE and STRICT_APPROVAL_ROLE not in {"viewer", "operator", "admin"}:
-        raise RuntimeError("CITYSORT_STRICT_APPROVAL_ROLE must be one of: viewer, operator, admin.")
-    if STRICT_AUTH_SECRET and (REQUIRE_AUTH or IS_PRODUCTION):
-        if AUTH_SECRET.strip().lower() in AUTH_SECRET_PLACEHOLDER_VALUES:
-            raise RuntimeError(
-                "CITYSORT_AUTH_SECRET must be set to a strong secret for authenticated/production mode."
-            )
-    validate_encryption_configuration()
-    if ENFORCE_HTTPS and APP_ENV == "development":
-        logger.warning("CITYSORT_ENFORCE_HTTPS=true in development mode.")
-    init_db()
-    start_job_worker()
-    start_watcher()
-
-
-@app.on_event("shutdown")
-def shutdown_event() -> None:
-    stop_job_worker()
-    stop_watcher()
 
 
 # --- Workflow state machine ---
@@ -492,24 +574,58 @@ def metrics() -> Response:
     return metrics_response()
 
 
+def _asset_version(filename: str) -> str:
+    """Return file mtime hex for cache busting (e.g. 'a3f1b2c4')."""
+    try:
+        mtime = (FRONTEND_DIR / filename).stat().st_mtime
+        return format(int(mtime), "x")
+    except Exception:
+        return "0"
+
+
+_CACHE_BUST_RE = re.compile(
+    r'(/static/(styles\.v2\.css|app\.v2\.js))\?v=[^"\']+',
+)
+
+
+def _inject_cache_busters(html: str) -> str:
+    """Replace static ?v= params with file-mtime-based versions."""
+
+    def _replacer(m: re.Match) -> str:
+        path = m.group(1)
+        filename = m.group(2)
+        return f"{path}?v={_asset_version(filename)}"
+
+    return _CACHE_BUST_RE.sub(_replacer, html)
+
+
 @app.get("/")
-def root() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+def root() -> Response:
+    index_path = FRONTEND_DIR / "index.html"
+    html = index_path.read_text(encoding="utf-8")
+    html = _inject_cache_busters(html)
+    return Response(content=html, media_type="text/html")
 
 
 @app.post("/api/auth/bootstrap", response_model=AuthResponse)
 def auth_bootstrap(payload: AuthBootstrapRequest) -> AuthResponse:
     try:
-        result = bootstrap_admin(email=payload.email, password=payload.password, full_name=payload.full_name)
+        result = bootstrap_admin(
+            email=payload.email, password=payload.password, full_name=payload.full_name
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return AuthResponse(access_token=result["access_token"], user=UserRecord(**result["user"]))
+    return AuthResponse(
+        access_token=result["access_token"], user=UserRecord(**result["user"])
+    )
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 def auth_login(payload: AuthLoginRequest) -> AuthResponse:
     result = authenticate_user(email=payload.email, password=payload.password)
-    return AuthResponse(access_token=result["access_token"], user=UserRecord(**result["user"]))
+    return AuthResponse(
+        access_token=result["access_token"], user=UserRecord(**result["user"])
+    )
 
 
 @app.get("/api/auth/me", response_model=UserRecord)
@@ -522,7 +638,9 @@ def auth_me(request: Request) -> UserRecord:
 
 
 @app.get("/api/auth/users", response_model=UserListResponse)
-def auth_list_users(request: Request, limit: int = Query(default=200, ge=1, le=500)) -> UserListResponse:
+def auth_list_users(
+    request: Request, limit: int = Query(default=200, ge=1, le=500)
+) -> UserListResponse:
     _enforce(request, role="admin", allow_api_key=False)
     items = [UserRecord(**item) for item in get_users(limit=limit)]
     return UserListResponse(items=items)
@@ -544,7 +662,9 @@ def auth_create_user(request: Request, payload: UserCreateRequest) -> UserRecord
 
 
 @app.patch("/api/auth/users/{user_id}/role", response_model=UserRecord)
-def auth_update_user_role(request: Request, user_id: str, payload: UserRoleUpdateRequest) -> UserRecord:
+def auth_update_user_role(
+    request: Request, user_id: str, payload: UserRoleUpdateRequest
+) -> UserRecord:
     _enforce(request, role="admin", allow_api_key=False)
     try:
         updated = set_user_role(user_id=user_id, role=payload.role)
@@ -571,14 +691,20 @@ async def upload_document(
     file_path = UPLOAD_DIR / safe_filename
 
     contents = await file.read()
-    content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    content_type = (
+        file.content_type
+        or mimetypes.guess_type(file.filename)[0]
+        or "application/octet-stream"
+    )
     try:
-        validate_upload(filename=file.filename, content_type=content_type, payload=contents)
+        validate_upload(
+            filename=file.filename, content_type=content_type, payload=contents
+        )
     except UploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     write_document_bytes(file_path, contents)
 
-    document = create_document(
+    create_document(
         document={
             "id": document_id,
             "filename": file.filename,
@@ -633,19 +759,25 @@ def import_documents_from_database(
 
     try:
         try:
-            rows = fetch_import_rows(connection=connection, query=payload.query, limit=payload.limit)
+            rows = fetch_import_rows(
+                connection=connection, query=payload.query, limit=payload.limit
+            )
         except ExternalDatabaseError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
         for index, row in enumerate(rows, start=1):
             try:
-                raw_filename = _coerce_optional_text(get_row_value(row, payload.filename_column))
+                raw_filename = _coerce_optional_text(
+                    get_row_value(row, payload.filename_column)
+                )
                 fallback_name = f"db_document_{index}.txt"
                 filename = Path(raw_filename or fallback_name).name or fallback_name
 
                 source_path: Optional[Path] = None
                 if payload.file_path_column:
-                    raw_path_value = _coerce_optional_text(get_row_value(row, payload.file_path_column))
+                    raw_path_value = _coerce_optional_text(
+                        get_row_value(row, payload.file_path_column)
+                    )
                     if raw_path_value:
                         source_path = Path(raw_path_value).expanduser().resolve()
                         if not source_path.exists() or not source_path.is_file():
@@ -664,11 +796,16 @@ def import_documents_from_database(
                 raw_content_type = None
                 if payload.content_type_column:
                     try:
-                        raw_content_type = get_row_value(row, payload.content_type_column)
+                        raw_content_type = get_row_value(
+                            row, payload.content_type_column
+                        )
                     except KeyError:
                         raw_content_type = None
 
-                content_type = _coerce_optional_text(raw_content_type) or mimetypes.guess_type(filename)[0]
+                content_type = (
+                    _coerce_optional_text(raw_content_type)
+                    or mimetypes.guess_type(filename)[0]
+                )
 
                 document_id = str(uuid.uuid4())
                 safe_filename = f"{document_id}_{filename}"
@@ -677,7 +814,11 @@ def import_documents_from_database(
                 if source_path is not None:
                     file_bytes = source_path.read_bytes()
                 payload_bytes = file_bytes or b""
-                content_type = content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                content_type = (
+                    content_type
+                    or mimetypes.guess_type(filename)[0]
+                    or "application/octet-stream"
+                )
                 try:
                     validate_upload(
                         filename=filename,
@@ -728,11 +869,15 @@ def import_documents_from_database(
                         }
                     )
                 else:
-                    imported_items.append({"id": document_id, "filename": filename, "status": "ingested"})
+                    imported_items.append(
+                        {"id": document_id, "filename": filename, "status": "ingested"}
+                    )
 
             except KeyError as exc:
                 missing_column = exc.args[0] if exc.args else "unknown"
-                errors.append(f"Row {index}: Missing expected column '{missing_column}'.")
+                errors.append(
+                    f"Row {index}: Missing expected column '{missing_column}'."
+                )
             except Exception as exc:  # pragma: no cover - runtime safeguard
                 errors.append(f"Row {index}: {exc}")
     finally:
@@ -750,8 +895,13 @@ def import_documents_from_database(
 
 _DB_CONNECTOR_TYPES = {"postgresql", "mysql", "sqlite"}
 _SAAS_CONNECTOR_TYPES = {
-    "servicenow", "confluence", "salesforce",
-    "google_cloud_storage", "amazon_s3", "jira", "sharepoint",
+    "servicenow",
+    "confluence",
+    "salesforce",
+    "google_cloud_storage",
+    "amazon_s3",
+    "jira",
+    "sharepoint",
 }
 
 
@@ -813,12 +963,17 @@ def test_connector(
                 connector_type=connector_type,
             )
 
-    raise HTTPException(status_code=400, detail=f"Unknown connector type: {connector_type}")
+    raise HTTPException(
+        status_code=400, detail=f"Unknown connector type: {connector_type}"
+    )
 
 
 # --- Connector Config persistence ---
 
-@app.get("/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse)
+
+@app.get(
+    "/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse
+)
 def get_connector_config(
     connector_type: str,
     request: Request = None,
@@ -826,13 +981,15 @@ def get_connector_config(
     _enforce(request, role="operator")
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM connector_configs WHERE connector_type = ?", (connector_type,)
+            "SELECT * FROM connector_configs WHERE connector_type = ?",
+            (connector_type,),
         ).fetchone()
     config_data = {}
     enabled = True
     last_sync = None
     if row:
         import json as _json
+
         config_data = _json.loads(row["config_json"] or "{}")
         enabled = bool(row["enabled"])
         last_sync = row["last_sync_at"]
@@ -845,7 +1002,9 @@ def get_connector_config(
     )
 
 
-@app.put("/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse)
+@app.put(
+    "/api/connectors/{connector_type}/config", response_model=ConnectorConfigResponse
+)
 def save_connector_config(
     connector_type: str,
     payload: ConnectorConfigSaveRequest,
@@ -854,6 +1013,7 @@ def save_connector_config(
     _enforce(request, role="operator")
     import json as _json
     from .repository import utcnow_iso
+
     now = utcnow_iso()
     config_json = _json.dumps(payload.config)
     with get_connection() as conn:
@@ -873,7 +1033,10 @@ def save_connector_config(
 
 # --- Connector Import ---
 
-@app.post("/api/connectors/{connector_type}/import", response_model=ConnectorImportResponse)
+
+@app.post(
+    "/api/connectors/{connector_type}/import", response_model=ConnectorImportResponse
+)
 def import_from_connector_endpoint(
     connector_type: str,
     payload: ConnectorImportRequest,
@@ -891,9 +1054,13 @@ def import_from_connector_endpoint(
             ).fetchone()
         if row:
             import json as _json
+
             config = _json.loads(row["config_json"] or "{}")
         if not config:
-            raise HTTPException(status_code=400, detail="No configuration provided or saved for this connector.")
+            raise HTTPException(
+                status_code=400,
+                detail="No configuration provided or saved for this connector.",
+            )
 
     try:
         result = import_from_connector(
@@ -911,7 +1078,10 @@ def import_from_connector_endpoint(
         imported_count=result["imported_count"],
         skipped_count=result["skipped_count"],
         failed_count=result["failed_count"],
-        documents=[{"id": d["id"], "filename": d["filename"], "status": d["status"]} for d in result.get("documents", [])],
+        documents=[
+            {"id": d["id"], "filename": d["filename"], "status": d["status"]}
+            for d in result.get("documents", [])
+        ],
         errors=result.get("errors", []),
     )
 
@@ -926,7 +1096,9 @@ def get_documents(
 ) -> DocumentListResponse:
     _enforce(request, role="viewer")
     items: list[DocumentResponse] = []
-    for item in list_documents(status=status, department=department, assigned_to=assigned_to, limit=limit):
+    for item in list_documents(
+        status=status, department=department, assigned_to=assigned_to, limit=limit
+    ):
         # Keep list endpoint light; full text is available from document detail endpoint.
         item_payload = dict(item)
         item_payload["extracted_text"] = None
@@ -968,7 +1140,9 @@ def download_document(document_id: str, request: Request = None):
         raise HTTPException(status_code=404, detail="File not found on disk")
     if not file_path.resolve().is_relative_to(UPLOAD_DIR.resolve()):
         raise HTTPException(status_code=403, detail="Access denied")
-    media_type = mimetypes.guess_type(record["filename"])[0] or "application/octet-stream"
+    media_type = (
+        mimetypes.guess_type(record["filename"])[0] or "application/octet-stream"
+    )
     file_bytes = read_document_bytes(file_path)
     return Response(
         content=file_bytes,
@@ -989,9 +1163,15 @@ async def reupload_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     contents = await file.read()
-    content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    content_type = (
+        file.content_type
+        or mimetypes.guess_type(file.filename)[0]
+        or "application/octet-stream"
+    )
     try:
-        validate_upload(filename=file.filename, content_type=content_type, payload=contents)
+        validate_upload(
+            filename=file.filename, content_type=content_type, payload=contents
+        )
     except UploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     safe_filename = f"{document_id}_{Path(file.filename).name}"
@@ -1000,11 +1180,14 @@ async def reupload_document(
     if old_path.exists():
         old_path.unlink(missing_ok=True)
     write_document_bytes(new_file_path, contents)
-    update_document(document_id, updates={
-        "storage_path": str(new_file_path),
-        "filename": file.filename,
-        "content_type": content_type,
-    })
+    update_document(
+        document_id,
+        updates={
+            "storage_path": str(new_file_path),
+            "filename": file.filename,
+            "content_type": content_type,
+        },
+    )
     create_audit_event(
         document_id=document_id,
         action="reuploaded",
@@ -1012,7 +1195,9 @@ async def reupload_document(
         details=f"new_file={file.filename}",
     )
     if reprocess:
-        process_document_by_id(document_id, actor=str(identity.get("actor", "manual_reupload")))
+        process_document_by_id(
+            document_id, actor=str(identity.get("actor", "manual_reupload"))
+        )
     refreshed = get_document(document_id)
     if not refreshed:
         raise HTTPException(status_code=500, detail="Unable to reload document")
@@ -1020,7 +1205,9 @@ async def reupload_document(
 
 
 @app.post("/api/documents/{document_id}/review", response_model=DocumentResponse)
-def review_document(document_id: str, payload: ReviewRequest, request: Request = None) -> DocumentResponse:
+def review_document(
+    document_id: str, payload: ReviewRequest, request: Request = None
+) -> DocumentResponse:
     identity = _enforce(request, role="operator")
     document = get_document(document_id)
     if not document:
@@ -1042,8 +1229,13 @@ def review_document(document_id: str, payload: ReviewRequest, request: Request =
         updates["requires_review"] = True
     else:
         corrected_doc_type = payload.corrected_doc_type or document.get("doc_type")
-        corrected_fields = {**document.get("extracted_fields", {}), **payload.corrected_fields}
-        corrected_department = payload.corrected_department or route_document(corrected_doc_type or "other")
+        corrected_fields = {
+            **document.get("extracted_fields", {}),
+            **payload.corrected_fields,
+        }
+        corrected_department = payload.corrected_department or route_document(
+            corrected_doc_type or "other"
+        )
 
         updates["doc_type"] = corrected_doc_type
         updates["department"] = corrected_department
@@ -1051,7 +1243,11 @@ def review_document(document_id: str, payload: ReviewRequest, request: Request =
         updates["requires_review"] = False
         updates["missing_fields"] = []
         updates["validation_errors"] = []
-        updates["status"] = "corrected" if payload.corrected_doc_type or payload.corrected_fields else "approved"
+        updates["status"] = (
+            "corrected"
+            if payload.corrected_doc_type or payload.corrected_fields
+            else "approved"
+        )
 
     updated = update_document(document_id, updates=updates)
     if not updated:
@@ -1077,7 +1273,9 @@ def reprocess_document(document_id: str, request: Request = None) -> DocumentRes
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    process_document_by_id(document_id, actor=str(identity.get("actor", "manual_reprocess")))
+    process_document_by_id(
+        document_id, actor=str(identity.get("actor", "manual_reprocess"))
+    )
     updated = get_document(document_id)
     if not updated:
         raise HTTPException(status_code=500, detail="Unable to reload document")
@@ -1107,21 +1305,29 @@ def get_rules_config(request: Request = None) -> RulesConfigResponse:
 
 
 @app.put("/api/config/rules", response_model=RulesConfigResponse)
-def update_rules_config(payload: RulesConfigUpdate, request: Request = None) -> RulesConfigResponse:
+def update_rules_config(
+    payload: RulesConfigUpdate, request: Request = None
+) -> RulesConfigResponse:
     _enforce(request, role="operator")
     try:
-        normalized = save_rules({key: value.model_dump() for key, value in payload.rules.items()})
+        normalized = save_rules(
+            {key: value.model_dump() for key, value in payload.rules.items()}
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return RulesConfigResponse(source="custom", path=str(get_rules_path()), rules=normalized)
+    return RulesConfigResponse(
+        source="custom", path=str(get_rules_path()), rules=normalized
+    )
 
 
 @app.post("/api/config/rules/reset", response_model=RulesConfigResponse)
 def reset_rules_config(request: Request = None) -> RulesConfigResponse:
     _enforce(request, role="operator")
     rules = reset_rules_to_default()
-    return RulesConfigResponse(source="default", path=str(get_rules_path()), rules=rules)
+    return RulesConfigResponse(
+        source="default", path=str(get_rules_path()), rules=rules
+    )
 
 
 @app.get("/api/queues", response_model=QueueResponse)
@@ -1151,6 +1357,7 @@ def get_classifier_info(request: Request = None) -> dict:
         ESCALATION_DAYS,
         ESCALATION_ENABLED,
     )
+
     return {
         "classifier_provider": CLASSIFIER_PROVIDER,
         "email_configured": email_configured(),
@@ -1164,7 +1371,9 @@ def get_classifier_info(request: Request = None) -> dict:
 
 
 @app.get("/api/activity/recent")
-def get_recent_activity(request: Request = None, limit: int = Query(default=15, ge=1, le=50)) -> dict:
+def get_recent_activity(
+    request: Request = None, limit: int = Query(default=15, ge=1, le=50)
+) -> dict:
     """Return recent audit events across all documents for the activity feed."""
     _enforce(request, role="viewer")
     with get_connection() as conn:
@@ -1195,7 +1404,9 @@ def run_platform_connectivity_check(request: Request = None) -> ConnectivityResp
 
 
 @app.post("/api/platform/deployments/manual", response_model=DeploymentRecord)
-def run_manual_deployment(payload: ManualDeploymentRequest, request: Request = None) -> DeploymentRecord:
+def run_manual_deployment(
+    payload: ManualDeploymentRequest, request: Request = None
+) -> DeploymentRecord:
     identity = _enforce(request, role="operator")
     actor = str(identity.get("actor", payload.actor or "dashboard_admin"))
 
@@ -1208,7 +1419,9 @@ def run_manual_deployment(payload: ManualDeploymentRequest, request: Request = N
     )
 
     try:
-        deploy_result = trigger_manual_deployment(environment=payload.environment, actor=actor, notes=payload.notes)
+        deploy_result = trigger_manual_deployment(
+            environment=payload.environment, actor=actor, notes=payload.notes
+        )
         status = deploy_result.get("status", "completed")
         details = f"{health_details}; {deploy_result.get('details', '')}".strip("; ")
         external_id = deploy_result.get("external_id")
@@ -1232,14 +1445,18 @@ def run_manual_deployment(payload: ManualDeploymentRequest, request: Request = N
 
 
 @app.get("/api/platform/deployments", response_model=DeploymentListResponse)
-def get_platform_deployments(request: Request = None, limit: int = Query(default=20, ge=1, le=100)) -> DeploymentListResponse:
+def get_platform_deployments(
+    request: Request = None, limit: int = Query(default=20, ge=1, le=100)
+) -> DeploymentListResponse:
     _enforce(request, role="viewer")
     items = [DeploymentRecord(**item) for item in list_deployments(limit=limit)]
     return DeploymentListResponse(items=items)
 
 
 @app.post("/api/platform/invitations", response_model=InvitationCreateResponse)
-def create_platform_invitation(payload: InvitationCreateRequest, request: Request) -> InvitationCreateResponse:
+def create_platform_invitation(
+    payload: InvitationCreateRequest, request: Request
+) -> InvitationCreateResponse:
     identity = _enforce(request, role="operator")
     invitation, raw_token = create_invitation(
         email=payload.email.strip().lower(),
@@ -1267,13 +1484,18 @@ def get_platform_invitations(
 
 
 @app.post("/api/platform/api-keys", response_model=ApiKeyCreateResponse)
-def create_platform_api_key(payload: ApiKeyCreateRequest, request: Request = None) -> ApiKeyCreateResponse:
+def create_platform_api_key(
+    payload: ApiKeyCreateRequest, request: Request = None
+) -> ApiKeyCreateResponse:
     identity = _enforce(request, role="operator")
     key_name = payload.name.strip()
     if not key_name:
         raise HTTPException(status_code=400, detail="API key name is required.")
 
-    record, raw_key = create_api_key(name=key_name, actor=str(identity.get("actor", payload.actor or "dashboard_admin")))
+    record, raw_key = create_api_key(
+        name=key_name,
+        actor=str(identity.get("actor", payload.actor or "dashboard_admin")),
+    )
     return ApiKeyCreateResponse(api_key=record, raw_key=raw_key)
 
 
@@ -1284,7 +1506,9 @@ def get_platform_api_keys(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> ApiKeyListResponse:
     _enforce(request, role="viewer")
-    items = [item for item in list_api_keys(include_revoked=include_revoked, limit=limit)]
+    items = [
+        item for item in list_api_keys(include_revoked=include_revoked, limit=limit)
+    ]
     return ApiKeyListResponse(items=items)
 
 
@@ -1304,7 +1528,9 @@ def get_platform_summary(request: Request = None) -> PlatformSummaryResponse:
     active_api_keys = count_api_keys(status="active")
     pending_invitations = count_invitations(status="pending")
     latest_deployment_raw = get_latest_deployment()
-    latest_deployment = DeploymentRecord(**latest_deployment_raw) if latest_deployment_raw else None
+    latest_deployment = (
+        DeploymentRecord(**latest_deployment_raw) if latest_deployment_raw else None
+    )
 
     return PlatformSummaryResponse(
         connectivity=connectivity,
@@ -1337,6 +1563,7 @@ def get_worker_job(job_id: str, request: Request = None) -> JobRecord:
 # =====================================================================
 # Workflow Transitions (Feature 4)
 # =====================================================================
+
 
 @app.post("/api/documents/{document_id}/transition", response_model=DocumentResponse)
 def transition_document(
@@ -1375,6 +1602,7 @@ def transition_document(
     # Auto-send status update email to citizen on key transitions.
     try:
         from .auto_emails import send_auto_status_update
+
         send_auto_status_update(document_id, payload.status)
     except Exception:
         pass  # Never block transition on email failure.
@@ -1385,6 +1613,7 @@ def transition_document(
 # =====================================================================
 # Assignment (Feature 5)
 # =====================================================================
+
 
 @app.post("/api/documents/{document_id}/assign", response_model=DocumentResponse)
 def assign_document(
@@ -1420,6 +1649,7 @@ def assign_document(
 # Automation Assistant
 # =====================================================================
 
+
 @app.post("/api/automation/auto-assign", response_model=AutomationAutoAssignResponse)
 def auto_assign_manual_documents(
     payload: AutomationAutoAssignRequest,
@@ -1429,7 +1659,9 @@ def auto_assign_manual_documents(
     user = identity.get("user")
     requested_user = _coerce_optional_text(payload.user_id)
     identity_user_id = user.get("id") if isinstance(user, dict) else None
-    assignee = requested_user or _coerce_optional_text(identity_user_id) or "triage_queue"
+    assignee = (
+        requested_user or _coerce_optional_text(identity_user_id) or "triage_queue"
+    )
     actor = str(identity.get("actor", payload.actor))
 
     assigned_count = 0
@@ -1534,6 +1766,7 @@ def run_anthropic_automation_sweep(
 # Notifications (Feature 2)
 # =====================================================================
 
+
 @app.get("/api/notifications", response_model=NotificationListResponse)
 def get_notifications(
     request: Request = None,
@@ -1575,6 +1808,7 @@ def read_all_notifications(request: Request = None):
 # Watcher Status (Feature 3)
 # =====================================================================
 
+
 @app.get("/api/watcher/status")
 def get_watcher_status(request: Request = None):
     _enforce(request, role="viewer")
@@ -1595,6 +1829,7 @@ def get_watcher_status(request: Request = None):
 # Response Templates (Feature 6)
 # =====================================================================
 
+
 @app.get("/api/templates", response_model=TemplateListResponse)
 def get_templates(
     request: Request = None,
@@ -1602,12 +1837,16 @@ def get_templates(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> TemplateListResponse:
     _enforce(request, role="viewer")
-    items = [TemplateRecord(**t) for t in list_templates(doc_type=doc_type, limit=limit)]
+    items = [
+        TemplateRecord(**t) for t in list_templates(doc_type=doc_type, limit=limit)
+    ]
     return TemplateListResponse(items=items)
 
 
 @app.post("/api/templates", response_model=TemplateRecord)
-def create_new_template(payload: TemplateCreateRequest, request: Request = None) -> TemplateRecord:
+def create_new_template(
+    payload: TemplateCreateRequest, request: Request = None
+) -> TemplateRecord:
     _enforce(request, role="operator")
     record = create_template_record(
         name=payload.name,
@@ -1707,7 +1946,9 @@ def send_document_response(
     subject = str(payload.subject or "").strip()
     body = str(payload.body or "").strip()
     if not EMAIL_RE.match(to_email):
-        raise HTTPException(status_code=400, detail="A valid recipient email is required.")
+        raise HTTPException(
+            status_code=400, detail="A valid recipient email is required."
+        )
     if not subject:
         raise HTTPException(status_code=400, detail="Subject is required.")
     if not body:
@@ -1779,8 +2020,11 @@ def send_document_response(
 # Bulk Operations (Feature 7)
 # =====================================================================
 
+
 @app.post("/api/documents/bulk", response_model=BulkActionResponse)
-def bulk_document_action(payload: BulkActionRequest, request: Request = None) -> BulkActionResponse:
+def bulk_document_action(
+    payload: BulkActionRequest, request: Request = None
+) -> BulkActionResponse:
     identity = _enforce(request, role="operator")
     actor = str(identity.get("actor", payload.actor))
     success_count = 0
@@ -1794,14 +2038,19 @@ def bulk_document_action(payload: BulkActionRequest, request: Request = None) ->
                 continue
 
             if payload.action == "approve":
-                update_document(doc_id, updates={
-                    "status": "approved",
-                    "requires_review": False,
-                    "missing_fields": [],
-                    "validation_errors": [],
-                })
+                update_document(
+                    doc_id,
+                    updates={
+                        "status": "approved",
+                        "requires_review": False,
+                        "missing_fields": [],
+                        "validation_errors": [],
+                    },
+                )
                 create_audit_event(
-                    document_id=doc_id, action="bulk_approved", actor=actor,
+                    document_id=doc_id,
+                    action="bulk_approved",
+                    actor=actor,
                 )
 
             elif payload.action == "assign":
@@ -1827,7 +2076,9 @@ def bulk_document_action(payload: BulkActionRequest, request: Request = None) ->
                     continue
                 allowed = ALLOWED_TRANSITIONS.get(doc["status"], set())
                 if target_status not in allowed:
-                    errors.append(f"{doc_id}: invalid transition {doc['status']} → {target_status}")
+                    errors.append(
+                        f"{doc_id}: invalid transition {doc['status']} → {target_status}"
+                    )
                     continue
                 update_document(doc_id, updates={"status": target_status})
                 create_audit_event(

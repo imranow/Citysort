@@ -27,11 +27,15 @@ def _get_fernet():
             "Encryption at rest is enabled but 'cryptography' is not installed."
         ) from exc
     if not ENCRYPTION_KEY:
-        raise RuntimeError("Encryption at rest is enabled but CITYSORT_ENCRYPTION_KEY is missing.")
+        raise RuntimeError(
+            "Encryption at rest is enabled but CITYSORT_ENCRYPTION_KEY is missing."
+        )
     try:
         _FERNET = Fernet(ENCRYPTION_KEY.encode("utf-8"))
     except Exception as exc:
-        raise RuntimeError("CITYSORT_ENCRYPTION_KEY is invalid. Must be a valid Fernet key.") from exc
+        raise RuntimeError(
+            "CITYSORT_ENCRYPTION_KEY is invalid. Must be a valid Fernet key."
+        ) from exc
     return _FERNET
 
 
@@ -87,7 +91,9 @@ def open_plaintext_path(source_path: Path, *, suffix: str = "") -> Iterator[Path
         return
 
     data = read_document_bytes(source_path)
-    temp_file = tempfile.NamedTemporaryFile(prefix="citysort_dec_", suffix=suffix, delete=False)
+    temp_file = tempfile.NamedTemporaryFile(
+        prefix="citysort_dec_", suffix=suffix, delete=False
+    )
     temp_path = Path(temp_file.name)
     try:
         temp_file.write(data)

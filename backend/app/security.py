@@ -48,7 +48,9 @@ class SlidingWindowRateLimiter:
 
     def check(self, key: str, *, limit: int, window_seconds: int) -> RateLimitDecision:
         if limit <= 0:
-            return RateLimitDecision(allowed=True, limit=limit, remaining=0, reset_seconds=window_seconds)
+            return RateLimitDecision(
+                allowed=True, limit=limit, remaining=0, reset_seconds=window_seconds
+            )
         now = time.monotonic()
         window_start = now - window_seconds
         with self._lock:
@@ -57,7 +59,11 @@ class SlidingWindowRateLimiter:
                 bucket.popleft()
             used = len(bucket)
             if used >= limit:
-                reset_seconds = max(1, int(window_seconds - (now - bucket[0]))) if bucket else window_seconds
+                reset_seconds = (
+                    max(1, int(window_seconds - (now - bucket[0])))
+                    if bucket
+                    else window_seconds
+                )
                 return RateLimitDecision(
                     allowed=False,
                     limit=limit,
@@ -108,7 +114,9 @@ def apply_security_headers(response: Response) -> None:
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     if ENFORCE_HTTPS:
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains; preload"
+        )
     if CONTENT_SECURITY_POLICY:
         response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
 
@@ -165,10 +173,14 @@ def validate_upload(
         )
     if not _allowed_extension(filename):
         allowed = ", ".join(sorted(UPLOAD_ALLOWED_EXTENSIONS))
-        raise UploadValidationError(f"File extension is not allowed. Allowed: {allowed}")
+        raise UploadValidationError(
+            f"File extension is not allowed. Allowed: {allowed}"
+        )
     if not _allowed_content_type(content_type):
         raise UploadValidationError("Unsupported content type.")
     if UPLOAD_VIRUS_SCAN_ENABLED:
         clean, reason = _clamav_scan(payload)
         if not clean:
-            raise UploadValidationError(f"Upload blocked by malware scanner: {reason or 'malicious content detected'}")
+            raise UploadValidationError(
+                f"Upload blocked by malware scanner: {reason or 'malicious content detected'}"
+            )

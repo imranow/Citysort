@@ -71,7 +71,9 @@ def start_timer() -> float:
     return perf_counter()
 
 
-def observe_request(*, method: str, path: str, status_code: int, started_at: Optional[float]) -> None:
+def observe_request(
+    *, method: str, path: str, status_code: int, started_at: Optional[float]
+) -> None:
     if started_at is None:
         return
     duration = max(perf_counter() - started_at, 0.0)

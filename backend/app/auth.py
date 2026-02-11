@@ -41,7 +41,9 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _sign(value: str) -> str:
-    digest = hmac.new(AUTH_SECRET.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).digest()
+    digest = hmac.new(
+        AUTH_SECRET.encode("utf-8"), value.encode("utf-8"), hashlib.sha256
+    ).digest()
     return _b64url_encode(digest)
 
 
@@ -52,10 +54,14 @@ def _hash_api_key(raw_key: str) -> str:
 def hash_password(password: str) -> str:
     if len(password) < PASSWORD_MIN_LENGTH:
         raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters.")
-    salt = hashlib.sha256(f"{_now().timestamp()}:{password}".encode("utf-8")).digest()[:16]
+    salt = hashlib.sha256(f"{_now().timestamp()}:{password}".encode("utf-8")).digest()[
+        :16
+    ]
     iterations = 240000
     derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return f"pbkdf2_sha256${iterations}${_b64url_encode(salt)}${_b64url_encode(derived)}"
+    return (
+        f"pbkdf2_sha256${iterations}${_b64url_encode(salt)}${_b64url_encode(derived)}"
+    )
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
@@ -73,13 +79,17 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(derived, expected)
 
 
-def create_access_token(*, user_id: str, role: str, ttl_minutes: int = ACCESS_TOKEN_TTL_MINUTES) -> str:
+def create_access_token(
+    *, user_id: str, role: str, ttl_minutes: int = ACCESS_TOKEN_TTL_MINUTES
+) -> str:
     payload = {
         "sub": user_id,
         "role": role,
         "exp": int((_now() + timedelta(minutes=ttl_minutes)).timestamp()),
     }
-    raw_payload = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    raw_payload = _b64url_encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
     signature = _sign(raw_payload)
     return f"{raw_payload}.{signature}"
 
@@ -119,7 +129,9 @@ def _validate_email(email: str) -> str:
     return normalized
 
 
-def bootstrap_admin(*, email: str, password: str, full_name: Optional[str] = None) -> dict[str, Any]:
+def bootstrap_admin(
+    *, email: str, password: str, full_name: Optional[str] = None
+) -> dict[str, Any]:
     if count_users() > 0:
         raise ValueError("Bootstrap is only allowed when no users exist.")
 
@@ -135,7 +147,9 @@ def bootstrap_admin(*, email: str, password: str, full_name: Optional[str] = Non
     return {"user": user, "access_token": token}
 
 
-def create_user_account(*, email: str, password: str, role: str, full_name: Optional[str] = None) -> dict[str, Any]:
+def create_user_account(
+    *, email: str, password: str, role: str, full_name: Optional[str] = None
+) -> dict[str, Any]:
     normalized_email = _validate_email(email)
     normalized_role = _normalize_role(role)
     if get_user_by_email(normalized_email):
@@ -234,7 +248,9 @@ def authorize_request(
         identity = _authenticate_from_api_key(api_key_header)
 
     if not identity:
-        raise HTTPException(status_code=401, detail="Missing or invalid authentication credentials.")
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid authentication credentials."
+        )
 
     if not role_allows(identity.get("role", "viewer"), normalized_required_role):
         raise HTTPException(status_code=403, detail="Insufficient role permissions.")

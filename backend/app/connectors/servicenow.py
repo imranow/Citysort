@@ -1,9 +1,8 @@
 """ServiceNow connector — pull attachments from incident/request records."""
+
 from __future__ import annotations
 
-import mimetypes
 from typing import Any, Optional
-from urllib.parse import quote
 
 from .base import (
     BaseConnector,
@@ -82,7 +81,9 @@ class ServiceNowConnector(BaseConnector):
                 docs.append(
                     ExternalDocument(
                         external_id=f"sn_{att.get('sys_id', '')}",
-                        filename=att.get("file_name", f"attachment_{att.get('sys_id', '')[:8]}"),
+                        filename=att.get(
+                            "file_name", f"attachment_{att.get('sys_id', '')[:8]}"
+                        ),
                         content_type=att.get("content_type"),
                         download_url=f"{base}/api/now/attachment/{att['sys_id']}/file",
                         size_bytes=int(att.get("size_bytes", 0)) or None,

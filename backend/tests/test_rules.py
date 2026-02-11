@@ -1,7 +1,12 @@
 from pathlib import Path
 
 from app.pipeline import process_document
-from app.rules import get_active_rules, normalize_rules, reset_rules_to_default, save_rules
+from app.rules import (
+    get_active_rules,
+    normalize_rules,
+    reset_rules_to_default,
+    save_rules,
+)
 
 
 def test_normalize_rules_adds_other() -> None:
@@ -53,8 +58,13 @@ def test_process_document_uses_custom_rules(monkeypatch, tmp_path) -> None:
         }
     )
 
-    monkeypatch.setattr("app.pipeline.try_external_ocr", lambda file_path, content_type=None: None)
-    monkeypatch.setattr("app.pipeline.try_external_classification", lambda text, extracted_fields, active_rules=None: None)
+    monkeypatch.setattr(
+        "app.pipeline.try_external_ocr", lambda file_path, content_type=None: None
+    )
+    monkeypatch.setattr(
+        "app.pipeline.try_external_classification",
+        lambda text, extracted_fields, active_rules=None: None,
+    )
 
     sample = Path(tmp_path / "task_sheet.txt")
     sample.write_text(

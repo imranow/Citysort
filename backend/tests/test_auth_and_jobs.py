@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 from starlette.requests import Request
@@ -44,7 +43,9 @@ def _request_with_bearer(token: str) -> Request:
 def test_bootstrap_login_and_authorize(isolated_modules) -> None:
     auth = isolated_modules["auth"]
 
-    bootstrap = auth.bootstrap_admin(email="admin@example.com", password="StrongPass123!", full_name="Admin")
+    bootstrap = auth.bootstrap_admin(
+        email="admin@example.com", password="StrongPass123!", full_name="Admin"
+    )
     assert bootstrap["user"]["role"] == "admin"
     assert bootstrap["access_token"]
 
@@ -52,7 +53,9 @@ def test_bootstrap_login_and_authorize(isolated_modules) -> None:
     token = login["access_token"]
     assert token
 
-    identity = auth.authorize_request(_request_with_bearer(token), required_role="admin", allow_api_key=False)
+    identity = auth.authorize_request(
+        _request_with_bearer(token), required_role="admin", allow_api_key=False
+    )
     assert identity["auth_type"] == "user"
     assert identity["role"] == "admin"
 

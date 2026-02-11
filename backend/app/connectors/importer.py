@@ -1,14 +1,14 @@
 """Shared import orchestration — ingest documents from any connector into CitySort pipeline."""
+
 from __future__ import annotations
 
 import json
 import logging
 import mimetypes
-from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from .base import BaseConnector, ConnectorError, ExternalDocument, get_connector
+from .base import ConnectorError, get_connector
 from ..security import UploadValidationError, validate_upload
 from ..storage import write_document_bytes
 
@@ -86,7 +86,7 @@ def import_from_connector(
     """
     from ..config import UPLOAD_DIR
     from ..jobs import enqueue_document_processing
-    from ..repository import create_audit_event, create_document, utcnow_iso
+    from ..repository import create_audit_event, create_document
 
     connector = get_connector(connector_type)
     source_channel = f"connector_{connector_type}"
@@ -115,7 +115,9 @@ def import_from_connector(
 
         # 3. Download
         try:
-            filename, file_bytes, content_type = connector.download_document(config, doc)
+            filename, file_bytes, content_type = connector.download_document(
+                config, doc
+            )
         except ConnectorError as exc:
             errors.append(f"{doc.filename}: Download failed — {exc}")
             continue
@@ -137,7 +139,9 @@ def import_from_connector(
             content_type = mimetypes.guess_type(filename)[0]
         content_type = content_type or "application/octet-stream"
         try:
-            validate_upload(filename=filename, content_type=content_type, payload=file_bytes)
+            validate_upload(
+                filename=filename, content_type=content_type, payload=file_bytes
+            )
             write_document_bytes(storage_path, file_bytes)
         except UploadValidationError as exc:
             errors.append(f"{filename}: Validation failed — {exc}")
@@ -194,7 +198,12 @@ def import_from_connector(
             enqueue_document_processing(document_id=document_id, actor=actor)
 
         imported.append({"id": document_id, "filename": filename, "status": "ingested"})
-        logger.info("Connector [%s] imported: %s -> %s", connector_type, doc.external_id, document_id)
+        logger.info(
+            "Connector [%s] imported: %s -> %s",
+            connector_type,
+            doc.external_id,
+            document_id,
+        )
 
     # Update last sync timestamp
     _update_last_sync(connector_type)

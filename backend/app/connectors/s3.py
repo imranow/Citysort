@@ -1,4 +1,5 @@
 """Amazon S3 connector — pull files from an S3 bucket using AWS Signature V4 auth."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +23,7 @@ from .base import (
 # AWS Signature V4 implementation (stdlib only)
 # ---------------------------------------------------------------------------
 
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -30,7 +32,9 @@ def _hmac_sha256(key: bytes, msg: str) -> bytes:
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
 
-def _signing_key(secret_key: str, date_stamp: str, region: str, service: str = "s3") -> bytes:
+def _signing_key(
+    secret_key: str, date_stamp: str, region: str, service: str = "s3"
+) -> bytes:
     k_date = _hmac_sha256(f"AWS4{secret_key}".encode("utf-8"), date_stamp)
     k_region = _hmac_sha256(k_date, region)
     k_service = _hmac_sha256(k_region, service)
@@ -49,7 +53,7 @@ def _sign_request(
     payload: bytes = b"",
 ) -> dict[str, str]:
     """Add AWS Signature V4 auth headers to a request. Returns full headers dict."""
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import urlparse
 
     parsed = urlparse(url)
     host = parsed.netloc
@@ -75,11 +79,18 @@ def _sign_request(
 
     credential_scope = f"{date_stamp}/{region}/s3/aws4_request"
     string_to_sign = "\n".join(
-        ["AWS4-HMAC-SHA256", amz_date, credential_scope, _sha256(canonical_request.encode())]
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            _sha256(canonical_request.encode()),
+        ]
     )
 
     key = _signing_key(secret_key, date_stamp, region)
-    signature = hmac.new(key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    signature = hmac.new(
+        key, string_to_sign.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
     hdrs["Authorization"] = (
         f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
@@ -91,6 +102,7 @@ def _sign_request(
 # ---------------------------------------------------------------------------
 # Connector
 # ---------------------------------------------------------------------------
+
 
 @register_connector
 class S3Connector(BaseConnector):
@@ -113,11 +125,17 @@ class S3Connector(BaseConnector):
         try:
             url = f"{self._endpoint(config)}/?list-type=2&max-keys=1"
             headers = _sign_request(
-                "GET", url, self._region(config),
-                config["access_key_id"], config["secret_access_key"],
+                "GET",
+                url,
+                self._region(config),
+                config["access_key_id"],
+                config["secret_access_key"],
             )
             _status, body, _hdrs = http_request(url, headers=headers, timeout=15)
-            return True, f"Successfully connected to S3 bucket '{config['bucket_name']}'."
+            return (
+                True,
+                f"Successfully connected to S3 bucket '{config['bucket_name']}'.",
+            )
         except ConnectorError as exc:
             return False, f"Connection failed: {exc}"
 
@@ -163,7 +181,9 @@ class S3Connector(BaseConnector):
                     filename=filename,
                     content_type=content_type,
                     download_url=f"{endpoint}/{quote(key, safe='/')}",
-                    size_bytes=int(size_el.text) if size_el is not None and size_el.text else None,
+                    size_bytes=int(size_el.text)
+                    if size_el is not None and size_el.text
+                    else None,
                     metadata={"bucket": bucket, "key": key},
                 )
             )
@@ -176,8 +196,11 @@ class S3Connector(BaseConnector):
         if not doc.download_url:
             raise ConnectorError("No download URL for S3 object.")
         headers = _sign_request(
-            "GET", doc.download_url, self._region(config),
-            config["access_key_id"], config["secret_access_key"],
+            "GET",
+            doc.download_url,
+            self._region(config),
+            config["access_key_id"],
+            config["secret_access_key"],
         )
         _status, file_bytes, _hdrs = http_request(doc.download_url, headers=headers)
         return doc.filename, file_bytes, doc.content_type

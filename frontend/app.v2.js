@@ -926,7 +926,7 @@ async function runAnthropicAutomationSweep() {
     const rawMessage = String(error.message || "Request failed");
     const message =
       rawMessage.toLowerCase() === "not found"
-        ? "Anthropic sweep endpoint is missing on this backend. Restart localhost server to load latest API."
+        ? "Anthropic sweep endpoint is not available. Ensure the server is running the latest version."
         : `Anthropic sweep failed: ${rawMessage}`;
     if (automationAssistantStatus) {
       automationAssistantStatus.classList.add("flag-error");

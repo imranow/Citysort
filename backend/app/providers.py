@@ -23,7 +23,16 @@ from .config import (
 from .rules import get_active_rules
 
 REQUEST_TIMEOUT_SECONDS = 60
-AI_PLACEHOLDER_VALUES = {"", "n/a", "na", "none", "null", "unknown", "not provided", "missing"}
+AI_PLACEHOLDER_VALUES = {
+    "",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "unknown",
+    "not provided",
+    "missing",
+}
 
 
 def _json_request(
@@ -42,7 +51,9 @@ def _json_request(
         body = json.dumps(payload).encode("utf-8")
         request_headers.setdefault("Content-Type", "application/json")
 
-    request = urllib.request.Request(url=url, data=body, method=method, headers=request_headers)
+    request = urllib.request.Request(
+        url=url, data=body, method=method, headers=request_headers
+    )
 
     with urllib.request.urlopen(request, timeout=timeout) as response:
         status_code = response.getcode()
@@ -88,7 +99,9 @@ def _extract_json_payload(text: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def _normalize_classifier_payload(payload: dict[str, Any], active_rules: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _normalize_classifier_payload(
+    payload: dict[str, Any], active_rules: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     allowed_types = set(active_rules.keys())
     doc_type = str(payload.get("doc_type", "other")).strip().lower()
     if doc_type not in allowed_types:
@@ -129,7 +142,9 @@ def _classification_prompt(
     text: str, extracted_fields: dict[str, Any], active_rules: dict[str, dict[str, Any]]
 ) -> str:
     categories = ", ".join(sorted(active_rules.keys()))
-    department_map = {doc_type: rule["department"] for doc_type, rule in active_rules.items()}
+    department_map = {
+        doc_type: rule["department"] for doc_type, rule in active_rules.items()
+    }
 
     return (
         "Classify this local-government intake document. "
@@ -209,7 +224,9 @@ def _guess_mime(file_path: str, content_type: Optional[str]) -> str:
     return "application/octet-stream"
 
 
-def try_external_ocr(file_path: str, content_type: Optional[str] = None) -> Optional[tuple[str, str, float]]:
+def try_external_ocr(
+    file_path: str, content_type: Optional[str] = None
+) -> Optional[tuple[str, str, float]]:
     if OCR_PROVIDER != "azure_di":
         return None
 
@@ -240,7 +257,9 @@ def try_external_ocr(file_path: str, content_type: Optional[str] = None) -> Opti
     if status_code not in {200, 202}:
         return None
 
-    operation_location = headers.get("Operation-Location") or headers.get("operation-location")
+    operation_location = headers.get("Operation-Location") or headers.get(
+        "operation-location"
+    )
     if not operation_location:
         return None
 
@@ -369,11 +388,16 @@ def _classify_with_anthropic(
         )
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
         import logging
+
         logging.getLogger(__name__).error("Anthropic API call failed: %s", exc)
         return None
 
     content_blocks = response_body.get("content", [])
-    text_blocks = [block.get("text") for block in content_blocks if isinstance(block, dict) and block.get("type") == "text"]
+    text_blocks = [
+        block.get("text")
+        for block in content_blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
     if not text_blocks:
         return None
 
@@ -397,7 +421,9 @@ def try_anthropic_field_enrichment(
         return None
     if not text.strip():
         return None
-    target_fields = [str(field).strip() for field in required_fields if str(field).strip()]
+    target_fields = [
+        str(field).strip() for field in required_fields if str(field).strip()
+    ]
     if not target_fields:
         return None
 
@@ -445,7 +471,9 @@ def try_anthropic_field_enrichment(
     allowed_fields = set(target_fields)
     # Allow email aliases when the model returns one variant.
     allowed_fields.update({"email", "applicant_email", "contact_email", "sender_email"})
-    normalized_fields = _normalize_enriched_fields(parsed, allowed_fields=allowed_fields)
+    normalized_fields = _normalize_enriched_fields(
+        parsed, allowed_fields=allowed_fields
+    )
     if not normalized_fields:
         return None
 
@@ -475,7 +503,9 @@ def try_anthropic_classification(
 
 
 def try_external_classification(
-    text: str, extracted_fields: dict[str, Any], active_rules: Optional[dict[str, dict[str, Any]]] = None
+    text: str,
+    extracted_fields: dict[str, Any],
+    active_rules: Optional[dict[str, dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
     rules = active_rules or get_active_rules()[0]
 
