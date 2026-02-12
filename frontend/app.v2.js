@@ -88,6 +88,8 @@ let _previewBlobUrl = "";
 let _previewImageZoom = 1;
 const _loadedScriptUrls = new Set();
 const _scriptLoadPromises = new Map();
+/** Prefetch cache: docId → { promise, blob, contentType } */
+const _previewCache = new Map();
 
 const rulesMeta = document.getElementById("rules-meta");
 const rulesLoad = document.getElementById("rules-load");
@@ -1617,6 +1619,22 @@ function resetPreviewContainer(message = "Preview not loaded.") {
   }
 }
 
+/** Prefetch the actual file for a document so the Preview tab loads instantly. */
+function prefetchDocumentPreview(docId) {
+  if (!docId || _previewCache.has(docId)) return;
+  const promise = apiFetch(`/api/documents/${docId}/preview`)
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      const entry = { blob, contentType };
+      _previewCache.set(docId, { promise: null, blob, contentType });
+      return entry;
+    })
+    .catch(() => null);
+  _previewCache.set(docId, { promise, blob: null, contentType: "" });
+}
+
 function loadScript(src) {
   if (_loadedScriptUrls.has(src)) {
     return Promise.resolve();
@@ -1779,46 +1797,47 @@ async function loadDocumentPreview(docId) {
     return;
   }
 
+  setPreviewStatus("Loading preview...");
+  resetPreviewContainer("Loading preview...");
+
   const doc = _currentDocForDocTab;
-  const contentType = String((doc && doc.content_type) || "").toLowerCase();
   const filename = String((doc && doc.filename) || "");
   const extension = filename.includes(".")
     ? filename.split(".").pop().toLowerCase()
     : "";
 
-  // Text and JSON files: use the already-loaded extracted_text — no extra fetch.
-  const isText = contentType.startsWith("text/")
-    || contentType.includes("application/json")
-    || ["txt", "csv", "json", "xml", "html", "md", "log"].includes(extension);
-
-  if (isText && doc && doc.extracted_text) {
-    setPreviewStatus("");
-    renderTextPreview(doc.extracted_text);
-    _previewCurrentDocumentId = docId;
-    setPreviewStatus("Preview loaded.");
-    return;
-  }
-
-  // Binary files (PDF, images, DOCX, XLSX): fetch from /preview endpoint.
-  setPreviewStatus("Loading preview...");
-  resetPreviewContainer("Loading preview...");
-
-  const response = await apiFetch(`/api/documents/${docId}/preview`);
-  if (!response.ok) {
-    let detail = "Preview request failed.";
-    try {
-      const errorData = await response.json();
-      detail = errorData.detail || detail;
-    } catch {
-      // Keep fallback message.
+  // Try to use prefetched blob from cache, otherwise fetch now.
+  let blob = null;
+  let resolvedType = "";
+  const cached = _previewCache.get(docId);
+  if (cached) {
+    if (cached.blob) {
+      blob = cached.blob;
+      resolvedType = cached.contentType;
+    } else if (cached.promise) {
+      const result = await cached.promise;
+      if (result) {
+        blob = result.blob;
+        resolvedType = result.contentType;
+      }
     }
-    throw new Error(detail);
   }
 
-  const blob = await response.blob();
-  const resolvedType = String(
-    response.headers.get("content-type") || contentType || ""
-  ).toLowerCase();
+  if (!blob) {
+    const response = await apiFetch(`/api/documents/${docId}/preview`);
+    if (!response.ok) {
+      let detail = "Preview request failed.";
+      try {
+        const errorData = await response.json();
+        detail = errorData.detail || detail;
+      } catch {
+        // Keep fallback message.
+      }
+      throw new Error(detail);
+    }
+    blob = await response.blob();
+    resolvedType = String(response.headers.get("content-type") || "").toLowerCase();
+  }
 
   if (resolvedType.startsWith("text/") || resolvedType.includes("application/json")) {
     renderTextPreview(await blob.text());
@@ -2045,8 +2064,11 @@ function renderReviewDocument(doc, auditItems) {
   renderFieldsEditor(doc.extracted_fields, doc.missing_fields);
   if (docReuploadStatus) docReuploadStatus.textContent = "";
   if (docFieldsStatus) docFieldsStatus.textContent = "";
-  resetPreviewContainer("Open the Preview tab to load this document.");
+  resetPreviewContainer("Open the Preview tab to view this file.");
   setPreviewStatus("Ready to preview.");
+
+  // Eagerly prefetch the actual file so the Preview tab loads instantly.
+  prefetchDocumentPreview(doc.id);
 
   // Reset to Review tab when selecting a new document
   switchDetailTab("review");
