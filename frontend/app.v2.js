@@ -1779,6 +1779,27 @@ async function loadDocumentPreview(docId) {
     return;
   }
 
+  const doc = _currentDocForDocTab;
+  const contentType = String((doc && doc.content_type) || "").toLowerCase();
+  const filename = String((doc && doc.filename) || "");
+  const extension = filename.includes(".")
+    ? filename.split(".").pop().toLowerCase()
+    : "";
+
+  // Text and JSON files: use the already-loaded extracted_text — no extra fetch.
+  const isText = contentType.startsWith("text/")
+    || contentType.includes("application/json")
+    || ["txt", "csv", "json", "xml", "html", "md", "log"].includes(extension);
+
+  if (isText && doc && doc.extracted_text) {
+    setPreviewStatus("");
+    renderTextPreview(doc.extracted_text);
+    _previewCurrentDocumentId = docId;
+    setPreviewStatus("Preview loaded.");
+    return;
+  }
+
+  // Binary files (PDF, images, DOCX, XLSX): fetch from /preview endpoint.
   setPreviewStatus("Loading preview...");
   resetPreviewContainer("Loading preview...");
 
@@ -1795,34 +1816,28 @@ async function loadDocumentPreview(docId) {
   }
 
   const blob = await response.blob();
-  const contentType = String(
-    response.headers.get("content-type")
-    || (_currentDocForDocTab && _currentDocForDocTab.content_type)
-    || ""
+  const resolvedType = String(
+    response.headers.get("content-type") || contentType || ""
   ).toLowerCase();
-  const filename = String((_currentDocForDocTab && _currentDocForDocTab.filename) || "");
-  const extension = filename.includes(".")
-    ? filename.split(".").pop().toLowerCase()
-    : "";
 
-  if (contentType.startsWith("text/") || contentType.includes("application/json")) {
+  if (resolvedType.startsWith("text/") || resolvedType.includes("application/json")) {
     renderTextPreview(await blob.text());
-  } else if (contentType.includes("application/pdf")) {
+  } else if (resolvedType.includes("application/pdf")) {
     _previewBlobUrl = URL.createObjectURL(blob);
     renderPdfPreview(_previewBlobUrl);
-  } else if (contentType.startsWith("image/")) {
+  } else if (resolvedType.startsWith("image/")) {
     _previewBlobUrl = URL.createObjectURL(blob);
     renderImagePreview(_previewBlobUrl);
   } else if (
     extension === "docx"
-    || contentType.includes(
+    || resolvedType.includes(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
   ) {
     await renderDocxPreview(blob);
   } else if (
     extension === "xlsx"
-    || contentType.includes(
+    || resolvedType.includes(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
   ) {
