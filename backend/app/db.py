@@ -4,9 +4,11 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import unquote
+from uuid import uuid4
 
 from .config import (
     APPROVED_EXPORT_DIR,
@@ -196,6 +198,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,
+            workspace_id TEXT,
             filename TEXT NOT NULL,
             storage_path TEXT NOT NULL,
             source_channel TEXT NOT NULL,
@@ -215,7 +218,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             updated_at TEXT NOT NULL,
             due_date TEXT,
             sla_days INTEGER,
-            assigned_to TEXT
+            assigned_to TEXT,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -224,12 +228,14 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS audit_events (
             id {auto_id},
+            workspace_id TEXT,
             document_id TEXT NOT NULL,
             action TEXT NOT NULL,
             actor TEXT NOT NULL,
             details TEXT,
             created_at TEXT NOT NULL,
-            FOREIGN KEY(document_id) REFERENCES documents(id)
+            FOREIGN KEY(document_id) REFERENCES documents(id),
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -255,6 +261,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS invitations (
             id {auto_id},
+            workspace_id TEXT,
             email TEXT NOT NULL,
             role TEXT NOT NULL,
             token_hash TEXT NOT NULL UNIQUE,
@@ -262,7 +269,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             actor TEXT NOT NULL,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
-            accepted_at TEXT
+            accepted_at TEXT,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -293,6 +301,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             status TEXT NOT NULL DEFAULT 'active',
             plan_tier TEXT NOT NULL DEFAULT 'free',
             stripe_customer_id TEXT,
+            email_preferences TEXT DEFAULT '{}',
             last_login_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -302,8 +311,41 @@ def _create_tables(connection: ConnectionAdapter) -> None:
 
     connection.execute(
         """
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            owner_id TEXT NOT NULL,
+            plan_tier TEXT NOT NULL DEFAULT 'free',
+            stripe_customer_id TEXT,
+            settings TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(owner_id) REFERENCES users(id)
+        )
+        """
+    )
+
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS workspace_members (
+            id {auto_id},
+            workspace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member',
+            joined_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            UNIQUE(workspace_id, user_id)
+        )
+        """
+    )
+
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY,
+            workspace_id TEXT,
             job_type TEXT NOT NULL,
             payload TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -315,7 +357,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             worker_id TEXT,
             created_at TEXT NOT NULL,
             started_at TEXT,
-            finished_at TEXT
+            finished_at TEXT,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -324,6 +367,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS notifications (
             id {auto_id},
+            workspace_id TEXT,
             user_id TEXT,
             type TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -331,7 +375,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             document_id TEXT,
             is_read INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
-            read_at TEXT
+            read_at TEXT,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -353,11 +398,13 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS templates (
             id {auto_id},
+            workspace_id TEXT,
             name TEXT NOT NULL,
             doc_type TEXT,
             template_body TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -366,6 +413,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS outbound_emails (
             id {auto_id},
+            workspace_id TEXT,
             document_id TEXT NOT NULL,
             to_email TEXT NOT NULL,
             subject TEXT NOT NULL,
@@ -374,7 +422,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             provider TEXT NOT NULL DEFAULT 'smtp',
             error TEXT,
             created_at TEXT NOT NULL,
-            sent_at TEXT
+            sent_at TEXT,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -383,12 +432,14 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS connector_configs (
             id {auto_id},
-            connector_type TEXT NOT NULL UNIQUE,
+            workspace_id TEXT,
+            connector_type TEXT NOT NULL,
             config_json TEXT NOT NULL DEFAULT '{{}}',
             enabled INTEGER NOT NULL DEFAULT 1,
             last_sync_at TEXT,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -397,6 +448,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id {auto_id},
+            workspace_id TEXT,
             user_id TEXT NOT NULL,
             plan_tier TEXT NOT NULL DEFAULT 'free',
             billing_type TEXT NOT NULL DEFAULT 'monthly',
@@ -408,7 +460,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             canceled_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -417,6 +470,7 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS payment_events (
             id {auto_id},
+            workspace_id TEXT,
             user_id TEXT,
             stripe_event_id TEXT UNIQUE,
             event_type TEXT NOT NULL,
@@ -425,7 +479,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             plan_tier TEXT,
             billing_type TEXT,
             raw_payload TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         )
         """
     )
@@ -507,6 +562,12 @@ def _create_tables(connection: ConnectionAdapter) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_payment_events_stripe_event ON payment_events (stripe_event_id)"
     )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members (workspace_id, user_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members (user_id, workspace_id)"
+    )
 
     # Idempotent seed templates.
     template_count_row = connection.execute(
@@ -545,6 +606,62 @@ def _create_tables(connection: ConnectionAdapter) -> None:
         )
 
 
+def _ensure_workspace_scoped_connector_configs(connection: ConnectionAdapter) -> None:
+    """Migrate legacy global connector_configs uniqueness to workspace scope."""
+    if DATABASE_BACKEND != "sqlite":
+        return
+
+    index_rows = connection.execute("PRAGMA index_list(connector_configs)").fetchall()
+    has_legacy_unique = False
+    for row in index_rows:
+        if not int(row["unique"]):
+            continue
+        index_name = str(row["name"])
+        index_columns = connection.execute(
+            f"PRAGMA index_info({index_name})"
+        ).fetchall()
+        column_names = [str(col["name"]) for col in index_columns]
+        if column_names == ["connector_type"]:
+            has_legacy_unique = True
+            break
+
+    if not has_legacy_unique:
+        return
+
+    connection.execute(
+        "ALTER TABLE connector_configs RENAME TO connector_configs_legacy"
+    )
+    connection.execute(
+        """
+        CREATE TABLE connector_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id TEXT,
+            connector_type TEXT NOT NULL,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            last_sync_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO connector_configs (id, workspace_id, connector_type, config_json, enabled, last_sync_at, created_at, updated_at)
+        SELECT id, workspace_id, connector_type, config_json, enabled, last_sync_at, created_at, updated_at
+        FROM connector_configs_legacy
+        """
+    )
+    connection.execute("DROP TABLE connector_configs_legacy")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_connector_configs_type ON connector_configs (connector_type)"
+    )
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_configs_workspace_type ON connector_configs (workspace_id, connector_type)"
+    )
+
+
 def _run_safe_migrations(connection: ConnectionAdapter) -> None:
     deployment_columns = _table_columns(connection, "deployments")
     if "provider" not in deployment_columns:
@@ -561,6 +678,10 @@ def _run_safe_migrations(connection: ConnectionAdapter) -> None:
         )
     if "stripe_customer_id" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT")
+    if "email_preferences" not in user_columns:
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN email_preferences TEXT DEFAULT '{}'"
+        )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users (stripe_customer_id)"
     )
@@ -572,6 +693,122 @@ def _run_safe_migrations(connection: ConnectionAdapter) -> None:
         connection.execute("ALTER TABLE documents ADD COLUMN sla_days INTEGER")
     if "assigned_to" not in document_columns:
         connection.execute("ALTER TABLE documents ADD COLUMN assigned_to TEXT")
+    if "workspace_id" not in document_columns:
+        connection.execute("ALTER TABLE documents ADD COLUMN workspace_id TEXT")
+
+    audit_columns = _table_columns(connection, "audit_events")
+    if "workspace_id" not in audit_columns:
+        connection.execute("ALTER TABLE audit_events ADD COLUMN workspace_id TEXT")
+
+    notification_columns = _table_columns(connection, "notifications")
+    if "workspace_id" not in notification_columns:
+        connection.execute("ALTER TABLE notifications ADD COLUMN workspace_id TEXT")
+
+    subscription_columns = _table_columns(connection, "subscriptions")
+    if "workspace_id" not in subscription_columns:
+        connection.execute("ALTER TABLE subscriptions ADD COLUMN workspace_id TEXT")
+
+    invitation_columns = _table_columns(connection, "invitations")
+    if "workspace_id" not in invitation_columns:
+        connection.execute("ALTER TABLE invitations ADD COLUMN workspace_id TEXT")
+
+    outbound_columns = _table_columns(connection, "outbound_emails")
+    if "workspace_id" not in outbound_columns:
+        connection.execute("ALTER TABLE outbound_emails ADD COLUMN workspace_id TEXT")
+
+    connector_columns = _table_columns(connection, "connector_configs")
+    if "workspace_id" not in connector_columns:
+        connection.execute("ALTER TABLE connector_configs ADD COLUMN workspace_id TEXT")
+    _ensure_workspace_scoped_connector_configs(connection)
+
+    job_columns = _table_columns(connection, "jobs")
+    if "workspace_id" not in job_columns:
+        connection.execute("ALTER TABLE jobs ADD COLUMN workspace_id TEXT")
+
+    template_columns = _table_columns(connection, "templates")
+    if "workspace_id" not in template_columns:
+        connection.execute("ALTER TABLE templates ADD COLUMN workspace_id TEXT")
+
+    payment_columns = _table_columns(connection, "payment_events")
+    if "workspace_id" not in payment_columns:
+        connection.execute("ALTER TABLE payment_events ADD COLUMN workspace_id TEXT")
+
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_workspace ON documents (workspace_id, updated_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications (workspace_id, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_invitations_workspace ON invitations (workspace_id, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_configs_workspace_type ON connector_configs (workspace_id, connector_type)"
+    )
+
+
+def _ensure_workspace_bootstrap(connection: ConnectionAdapter) -> None:
+    workspace_count_row = connection.execute(
+        "SELECT COUNT(*) AS total FROM workspaces"
+    ).fetchone()
+    workspace_count = int(workspace_count_row["total"]) if workspace_count_row else 0
+    if workspace_count > 0:
+        return
+
+    user_rows = connection.execute(
+        "SELECT id, role FROM users ORDER BY created_at ASC"
+    ).fetchall()
+    if not user_rows:
+        return
+
+    owner_id = None
+    for row in user_rows:
+        if str(row["role"]).strip().lower() == "admin":
+            owner_id = str(row["id"])
+            break
+    if not owner_id:
+        owner_id = str(user_rows[0]["id"])
+
+    now = datetime.now(timezone.utc).isoformat()
+    workspace_id = str(uuid4())
+    connection.execute(
+        """
+        INSERT INTO workspaces (id, name, slug, owner_id, plan_tier, stripe_customer_id, settings, created_at, updated_at)
+        VALUES (?, 'Default', 'default', ?, 'free', NULL, '{}', ?, ?)
+        """,
+        (workspace_id, owner_id, now, now),
+    )
+
+    for row in user_rows:
+        member_role = "admin" if str(row["id"]) == owner_id else "member"
+        connection.execute(
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, joined_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_id, user_id) DO NOTHING
+            """,
+            (workspace_id, str(row["id"]), member_role, now),
+        )
+
+    # Backfill existing records to the default workspace.
+    for table_name in (
+        "documents",
+        "notifications",
+        "audit_events",
+        "subscriptions",
+        "invitations",
+        "outbound_emails",
+        "connector_configs",
+        "jobs",
+        "templates",
+        "payment_events",
+    ):
+        columns = _table_columns(connection, table_name)
+        if "workspace_id" in columns:
+            connection.execute(
+                f"UPDATE {table_name} SET workspace_id = ? WHERE workspace_id IS NULL",
+                (workspace_id,),
+            )
 
 
 def init_db() -> None:
@@ -579,3 +816,4 @@ def init_db() -> None:
     with get_connection() as connection:
         _create_tables(connection)
         _run_safe_migrations(connection)
+        _ensure_workspace_bootstrap(connection)

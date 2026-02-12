@@ -55,16 +55,26 @@ def _record_sync(
         )
 
 
-def _update_last_sync(connector_type: str) -> None:
+def _update_last_sync(connector_type: str, workspace_id: Optional[str] = None) -> None:
     """Update the last_sync_at timestamp in connector_configs."""
     from ..db import get_connection
     from ..repository import utcnow_iso
 
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE connector_configs SET last_sync_at = ?, updated_at = ? WHERE connector_type = ?",
-            (utcnow_iso(), utcnow_iso(), connector_type),
+    if workspace_id is not None:
+        query = (
+            "UPDATE connector_configs SET last_sync_at = ?, updated_at = ? "
+            "WHERE connector_type = ? AND workspace_id = ?"
         )
+        params = (utcnow_iso(), utcnow_iso(), connector_type, workspace_id)
+    else:
+        query = (
+            "UPDATE connector_configs SET last_sync_at = ?, updated_at = ? "
+            "WHERE connector_type = ?"
+        )
+        params = (utcnow_iso(), utcnow_iso(), connector_type)
+
+    with get_connection() as conn:
+        conn.execute(query, params)
 
 
 def import_from_connector(
@@ -74,6 +84,7 @@ def import_from_connector(
     limit: int = 50,
     process_async: bool = True,
     actor: str = "connector_import",
+    workspace_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Run a full import cycle for any connector:
@@ -155,6 +166,7 @@ def import_from_connector(
             create_document(
                 document={
                     "id": document_id,
+                    "workspace_id": workspace_id,
                     "filename": filename,
                     "storage_path": str(storage_path),
                     "source_channel": source_channel,
@@ -191,11 +203,16 @@ def import_from_connector(
             action="connector_imported",
             actor=actor,
             details=f"source={source_channel} external_id={doc.external_id}",
+            workspace_id=workspace_id,
         )
 
         # 8. Enqueue processing
         if process_async:
-            enqueue_document_processing(document_id=document_id, actor=actor)
+            enqueue_document_processing(
+                document_id=document_id,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
 
         imported.append({"id": document_id, "filename": filename, "status": "ingested"})
         logger.info(
@@ -206,7 +223,7 @@ def import_from_connector(
         )
 
     # Update last sync timestamp
-    _update_last_sync(connector_type)
+    _update_last_sync(connector_type, workspace_id=workspace_id)
 
     return {
         "imported_count": len(imported),

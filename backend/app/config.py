@@ -271,10 +271,10 @@ SECURITY_HEADERS_ENABLED = _env_bool("CITYSORT_SECURITY_HEADERS_ENABLED", True)
 CONTENT_SECURITY_POLICY = os.getenv(
     "CITYSORT_CONTENT_SECURITY_POLICY",
     "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; "
-    "img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-    "script-src 'self' https://js.stripe.com; "
+    "img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; "
+    "script-src 'self' https://js.stripe.com https://unpkg.com https://cdnjs.cloudflare.com; "
     "connect-src 'self' https://api.stripe.com; "
-    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com;",
+    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com blob:;",
 ).strip()
 REFERRER_POLICY = os.getenv(
     "CITYSORT_REFERRER_POLICY", "strict-origin-when-cross-origin"
@@ -372,6 +372,10 @@ SMTP_TIMEOUT_SECONDS = _env_int(
 AUTO_ACK_EMAIL_ENABLED = _env_bool("CITYSORT_AUTO_ACK_EMAIL", True)
 AUTO_STATUS_EMAIL_ENABLED = _env_bool("CITYSORT_AUTO_STATUS_EMAIL", True)
 AUTO_MISSING_INFO_EMAIL_ENABLED = _env_bool("CITYSORT_AUTO_MISSING_INFO_EMAIL", True)
+AUTO_ASSIGNMENT_EMAIL_ENABLED = _env_bool("CITYSORT_AUTO_ASSIGNMENT_EMAIL", True)
+AUTO_REVIEW_COMPLETE_EMAIL_ENABLED = _env_bool(
+    "CITYSORT_AUTO_REVIEW_COMPLETE_EMAIL", True
+)
 AUTO_ASSIGN_ENABLED = _env_bool("CITYSORT_AUTO_ASSIGN", False)
 ESCALATION_ENABLED = _env_bool("CITYSORT_ESCALATION_ENABLED", True)
 ESCALATION_DAYS = _env_int("CITYSORT_ESCALATION_DAYS", 3, min_value=1, max_value=30)

@@ -21,13 +21,31 @@ def create_notification(
     message: str = "",
     user_id: Optional[str] = None,
     document_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> dict[str, Any]:
+    resolved_workspace_id = workspace_id
+    if resolved_workspace_id is None and document_id:
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT workspace_id FROM documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row:
+                resolved_workspace_id = row["workspace_id"]
     created_at = utcnow_iso()
     with get_connection() as connection:
         cursor = connection.execute(
-            """INSERT INTO notifications (user_id, type, title, message, document_id, is_read, created_at)
-               VALUES (?, ?, ?, ?, ?, 0, ?)""",
-            (user_id, type, title, message, document_id, created_at),
+            """INSERT INTO notifications (workspace_id, user_id, type, title, message, document_id, is_read, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
+            (
+                resolved_workspace_id,
+                user_id,
+                type,
+                title,
+                message,
+                document_id,
+                created_at,
+            ),
         )
         row = connection.execute(
             "SELECT * FROM notifications WHERE id = ?", (cursor.lastrowid,)
@@ -40,6 +58,7 @@ def create_notification(
 def list_notifications(
     *,
     user_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     unread_only: bool = False,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
@@ -49,6 +68,9 @@ def list_notifications(
     if user_id:
         conditions.append("(user_id = ? OR user_id IS NULL)")
         params.append(user_id)
+    if workspace_id is not None:
+        conditions.append("workspace_id = ?")
+        params.append(workspace_id)
     if unread_only:
         conditions.append("is_read = 0")
     if conditions:
@@ -60,19 +82,27 @@ def list_notifications(
     return [dict(row) for row in rows]
 
 
-def count_unread(*, user_id: Optional[str] = None) -> int:
+def count_unread(
+    *, user_id: Optional[str] = None, workspace_id: Optional[str] = None
+) -> int:
     query = "SELECT COUNT(*) AS total FROM notifications WHERE is_read = 0"
     params: list[Any] = []
     if user_id:
         query += " AND (user_id = ? OR user_id IS NULL)"
         params.append(user_id)
+    if workspace_id is not None:
+        query += " AND workspace_id = ?"
+        params.append(workspace_id)
     with get_connection() as connection:
         row = connection.execute(query, params).fetchone()
     return int(row["total"]) if row else 0
 
 
 def mark_read(
-    notification_id: int, *, user_id: Optional[str] = None
+    notification_id: int,
+    *,
+    user_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     read_at = utcnow_iso()
     query = "UPDATE notifications SET is_read = 1, read_at = ? WHERE id = ?"
@@ -84,19 +114,29 @@ def mark_read(
         params.append(user_id)
         select_query += " AND (user_id = ? OR user_id IS NULL)"
         select_params.append(user_id)
+    if workspace_id is not None:
+        query += " AND workspace_id = ?"
+        params.append(workspace_id)
+        select_query += " AND workspace_id = ?"
+        select_params.append(workspace_id)
     with get_connection() as connection:
         connection.execute(query, params)
         row = connection.execute(select_query, select_params).fetchone()
     return dict(row) if row else None
 
 
-def mark_all_read(*, user_id: Optional[str] = None) -> int:
+def mark_all_read(
+    *, user_id: Optional[str] = None, workspace_id: Optional[str] = None
+) -> int:
     read_at = utcnow_iso()
     query = "UPDATE notifications SET is_read = 1, read_at = ? WHERE is_read = 0"
     params: list[Any] = [read_at]
     if user_id:
         query += " AND (user_id = ? OR user_id IS NULL)"
         params.append(user_id)
+    if workspace_id is not None:
+        query += " AND workspace_id = ?"
+        params.append(workspace_id)
     with get_connection() as connection:
         cursor = connection.execute(query, params)
     return cursor.rowcount

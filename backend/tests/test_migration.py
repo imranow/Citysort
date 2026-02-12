@@ -146,21 +146,27 @@ def test_migration_script_table_list():
         assert table in TABLES_IN_ORDER, f"Migration script missing table: {table}"
 
 
-def test_connector_configs_unique_constraint(sqlite_db):
-    """Verify connector_configs has unique constraint on connector_type."""
+def test_connector_configs_workspace_unique_constraint(sqlite_db):
+    """Verify connector_configs is unique per (workspace_id, connector_type)."""
     conn = sqlite3.connect(str(sqlite_db))
     conn.execute(
-        "INSERT INTO connector_configs (connector_type, config_json, enabled, created_at, updated_at) "
-        "VALUES ('jira', '{}', 1, '2026-01-01', '2026-01-01')"
+        "INSERT INTO connector_configs (workspace_id, connector_type, config_json, enabled, created_at, updated_at) "
+        "VALUES ('ws-a', 'jira', '{}', 1, '2026-01-01', '2026-01-01')"
     )
     conn.commit()
 
-    # Second insert with same type should fail
+    # Same workspace + connector should fail.
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO connector_configs (connector_type, config_json, enabled, created_at, updated_at) "
-            "VALUES ('jira', '{}', 1, '2026-01-01', '2026-01-01')"
+            "INSERT INTO connector_configs (workspace_id, connector_type, config_json, enabled, created_at, updated_at) "
+            "VALUES ('ws-a', 'jira', '{}', 1, '2026-01-01', '2026-01-01')"
         )
+
+    # Different workspace + same connector should succeed.
+    conn.execute(
+        "INSERT INTO connector_configs (workspace_id, connector_type, config_json, enabled, created_at, updated_at) "
+        "VALUES ('ws-b', 'jira', '{}', 1, '2026-01-01', '2026-01-01')"
+    )
     conn.close()
 
 

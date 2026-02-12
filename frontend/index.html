@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css?v=20260211a" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260212b" />
   </head>
   <body>
     <div class="app-shell">
@@ -98,8 +98,13 @@
         <div class="sidebar-account">
           <div class="account-avatar" aria-hidden="true">P</div>
           <div class="account-meta">
-            <strong>Personal</strong>
-            <span>citysort workspace</span>
+            <label class="workspace-label" for="workspace-switcher">Workspace</label>
+            <select
+              id="workspace-switcher"
+              class="workspace-switcher"
+              aria-label="Switch workspace"
+            ></select>
+            <span id="workspace-slug">citysort workspace</span>
           </div>
         </div>
 
@@ -121,6 +126,7 @@
           <p class="sidebar-label">Manage</p>
           <a href="/app?page=rules" class="sidebar-link" data-page="rules"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12"/><path d="M2 8h12"/><path d="M2 13h12"/><circle cx="5" cy="3" r="1.5" fill="var(--surface)" /><circle cx="11" cy="8" r="1.5" fill="var(--surface)" /><circle cx="7" cy="13" r="1.5" fill="var(--surface)" /></svg><span>Routing Rules</span></a>
           <a href="/app?page=connectors" class="sidebar-link" data-page="connectors"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3H3v4h3M10 3h3v4h-3M6 5h4M6 9H3v4h3M10 9h3v4h-3M6 11h4"/></svg><span>Connectors</span></a>
+          <a href="/app?page=admin" class="sidebar-link" data-page="admin"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2.5h10v11H3z"/><path d="M6 5.5h4M6 8h4M6 10.5h4"/></svg><span>Admin</span></a>
         </div>
 
         <div class="sidebar-group sidebar-group-muted">
@@ -208,6 +214,7 @@
           <a href="/app?page=queues" class="tab" data-page="queues">Document Review</a>
           <a href="/app?page=rules" class="tab" data-page="rules">Routing Rules</a>
           <a href="/app?page=connectors" class="tab" data-page="connectors">Connectors</a>
+          <a href="/app?page=admin" class="tab" data-page="admin">Admin</a>
         </nav>
 
         <main class="layout">
@@ -299,6 +306,47 @@
                 <div class="metric-bar"><span class="metric-bar-fill" id="metric-confidence-bar"></span></div>
               </article>
             </div>
+          </section>
+
+          <section class="panel preferences-panel" data-pages="overview">
+            <div class="section-head">
+              <h2>Email Preferences</h2>
+              <p>Control account and document notifications</p>
+            </div>
+            <form id="email-preferences-form" class="preferences-form">
+              <label class="pref-item" for="pref-account-welcome">
+                <input id="pref-account-welcome" type="checkbox" data-pref-key="account_welcome" />
+                <span>Welcome email on account creation</span>
+              </label>
+              <label class="pref-item" for="pref-account-plan-change">
+                <input id="pref-account-plan-change" type="checkbox" data-pref-key="account_plan_change" />
+                <span>Plan change confirmations</span>
+              </label>
+              <label class="pref-item" for="pref-account-payment-receipt">
+                <input id="pref-account-payment-receipt" type="checkbox" data-pref-key="account_payment_receipt" />
+                <span>Payment receipt emails</span>
+              </label>
+              <label class="pref-item" for="pref-account-invitation">
+                <input id="pref-account-invitation" type="checkbox" data-pref-key="account_invitation" />
+                <span>Invitation emails</span>
+              </label>
+              <label class="pref-item" for="pref-doc-assigned">
+                <input id="pref-doc-assigned" type="checkbox" data-pref-key="doc_assigned" />
+                <span>Document assigned to me</span>
+              </label>
+              <label class="pref-item" for="pref-doc-review-complete">
+                <input id="pref-doc-review-complete" type="checkbox" data-pref-key="doc_review_complete" />
+                <span>Document review completed</span>
+              </label>
+              <label class="pref-item" for="pref-doc-digest">
+                <input id="pref-doc-digest" type="checkbox" data-pref-key="doc_digest" />
+                <span>Digest summaries</span>
+              </label>
+              <div class="preferences-actions">
+                <button type="submit" class="secondary" id="email-preferences-save">Save Preferences</button>
+              </div>
+            </form>
+            <p id="email-preferences-status" class="status"></p>
           </section>
 
           <section class="panel connectors-panel" data-pages="overview connectors">
@@ -530,6 +578,7 @@ FROM documents_to_ingest</textarea>
                   <div class="detail-tabs" id="detail-tabs">
                     <button type="button" class="detail-tab active" data-detail-tab="review">Review</button>
                     <button type="button" class="detail-tab" data-detail-tab="document">Document</button>
+                    <button type="button" class="detail-tab" data-detail-tab="preview">Preview</button>
                   </div>
 
                   <!-- Tab panel: Review -->
@@ -605,6 +654,14 @@ FROM documents_to_ingest</textarea>
                       <p id="doc-fields-status" class="status"></p>
                     </div>
                   </div>
+
+                  <!-- Tab panel: Preview -->
+                  <div class="detail-tab-panel" id="detail-panel-preview" data-detail-panel="preview">
+                    <p id="doc-preview-status" class="status">Open a document to preview.</p>
+                    <div id="doc-preview-container" class="preview-container">
+                      <div class="preview-empty">Preview not loaded.</div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -639,6 +696,56 @@ FROM documents_to_ingest</textarea>
             </details>
             <p id="rules-status" class="status"></p>
           </section>
+
+          <section class="panel admin-panel" data-pages="admin">
+            <div class="section-head">
+              <h2>Admin Dashboard</h2>
+              <p>Users, billing, health, audit, invitations</p>
+            </div>
+            <div class="admin-tabs" id="admin-tabs">
+              <button type="button" class="admin-tab active" data-admin-tab="users">Users</button>
+              <button type="button" class="admin-tab" data-admin-tab="billing">Billing</button>
+              <button type="button" class="admin-tab" data-admin-tab="system">System Health</button>
+              <button type="button" class="admin-tab" data-admin-tab="audit">Audit Log</button>
+              <button type="button" class="admin-tab" data-admin-tab="invitations">Invitations</button>
+            </div>
+
+            <div class="admin-tab-panel active" data-admin-panel="users">
+              <div id="admin-users-content" class="admin-content">Loading users...</div>
+            </div>
+            <div class="admin-tab-panel" data-admin-panel="billing">
+              <div id="admin-billing-content" class="admin-content">Loading billing stats...</div>
+            </div>
+            <div class="admin-tab-panel" data-admin-panel="system">
+              <div id="admin-system-content" class="admin-content">Loading system health...</div>
+            </div>
+            <div class="admin-tab-panel" data-admin-panel="audit">
+              <div class="admin-audit-controls">
+                <input id="admin-audit-action" type="text" placeholder="Action filter (optional)" />
+                <input id="admin-audit-actor" type="text" placeholder="Actor filter (optional)" />
+                <button type="button" id="admin-audit-apply" class="secondary">Apply</button>
+              </div>
+              <div id="admin-audit-content" class="admin-content">Loading audit log...</div>
+              <div class="admin-audit-pagination">
+                <button type="button" id="admin-audit-prev" class="secondary">Previous</button>
+                <span id="admin-audit-page">Page 1</span>
+                <button type="button" id="admin-audit-next" class="secondary">Next</button>
+              </div>
+            </div>
+            <div class="admin-tab-panel" data-admin-panel="invitations">
+              <form id="admin-invite-form" class="admin-invite-form">
+                <input id="admin-invite-email" type="email" placeholder="name@example.com" required />
+                <select id="admin-invite-role">
+                  <option value="member">member</option>
+                  <option value="operator">operator</option>
+                  <option value="admin">admin</option>
+                </select>
+                <button type="submit">Create Invite</button>
+              </form>
+              <div id="admin-invitations-content" class="admin-content">Loading invitations...</div>
+            </div>
+            <p id="admin-status" class="status"></p>
+          </section>
         </main>
       </div>
     </div>
@@ -669,6 +776,10 @@ FROM documents_to_ingest</textarea>
           rules: {
             title: "Routing Rules",
             subtitle: "Manage classification policy, required fields, and department routing behavior for new intake.",
+          },
+          admin: {
+            title: "Admin",
+            subtitle: "System administration across users, billing, operations health, and audit activity.",
           },
         };
 
@@ -755,6 +866,6 @@ FROM documents_to_ingest</textarea>
       </div>
     </div>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js?v=20260211a"></script>
+    <script src="/static/app.v2.js?v=20260212b"></script>
   </body>
 </html>

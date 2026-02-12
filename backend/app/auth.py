@@ -13,10 +13,13 @@ from fastapi import HTTPException, Request
 from .config import ACCESS_TOKEN_TTL_MINUTES, AUTH_SECRET, REQUIRE_AUTH
 from .repository import (
     count_users,
+    create_workspace,
     create_user,
     get_api_key_by_hash,
+    get_default_workspace_for_user,
     get_user_by_email,
     get_user_by_id,
+    get_workspace_role as repository_get_workspace_role,
     list_users,
     update_user_login,
     update_user_role,
@@ -80,13 +83,19 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def create_access_token(
-    *, user_id: str, role: str, ttl_minutes: int = ACCESS_TOKEN_TTL_MINUTES
+    *,
+    user_id: str,
+    role: str,
+    workspace_id: Optional[str] = None,
+    ttl_minutes: int = ACCESS_TOKEN_TTL_MINUTES,
 ) -> str:
     payload = {
         "sub": user_id,
         "role": role,
         "exp": int((_now() + timedelta(minutes=ttl_minutes)).timestamp()),
     }
+    if workspace_id:
+        payload["wid"] = workspace_id
     raw_payload = _b64url_encode(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     )
@@ -143,7 +152,16 @@ def bootstrap_admin(
         password_hash=password_hash,
         role="admin",
     )
-    token = create_access_token(user_id=user["id"], role=user["role"])
+    workspace_name = (full_name or "Admin").strip() or "Admin"
+    workspace = create_workspace(
+        name=f"{workspace_name}'s Workspace",
+        owner_id=user["id"],
+        plan_tier=user.get("plan_tier", "free"),
+    )
+    token = create_access_token(
+        user_id=user["id"], role=user["role"], workspace_id=workspace["id"]
+    )
+    user["workspace_id"] = workspace["id"]
     return {"user": user, "access_token": token}
 
 
@@ -161,6 +179,15 @@ def create_user_account(
         password_hash=hash_password(password),
         role=normalized_role,
     )
+    workspace_label = (
+        full_name or normalized_email.split("@")[0]
+    ).strip() or "Personal"
+    workspace = create_workspace(
+        name=f"{workspace_label}'s Workspace",
+        owner_id=user["id"],
+        plan_tier=user.get("plan_tier", "free"),
+    )
+    user["workspace_id"] = workspace["id"]
     return user
 
 
@@ -178,7 +205,13 @@ def authenticate_user(*, email: str, password: str) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="User not found.")
 
-    token = create_access_token(user_id=user["id"], role=user["role"])
+    default_workspace = get_default_workspace_for_user(user["id"])
+    workspace_id = default_workspace["id"] if default_workspace else None
+    token = create_access_token(
+        user_id=user["id"], role=user["role"], workspace_id=workspace_id
+    )
+    if workspace_id:
+        user["workspace_id"] = workspace_id
     return {"user": user, "access_token": token}
 
 
@@ -208,11 +241,22 @@ def _authenticate_from_token(raw_token: str) -> dict[str, Any]:
     user = get_user_by_id(str(user_id))
     if not user or user.get("status") != "active":
         raise HTTPException(status_code=401, detail="User no longer active.")
+    workspace_id = payload.get("wid")
+    if not workspace_id:
+        default_workspace = get_default_workspace_for_user(str(user_id))
+        workspace_id = default_workspace.get("id") if default_workspace else None
+    workspace_role = None
+    if workspace_id:
+        workspace_role = repository_get_workspace_role(str(user_id), str(workspace_id))
+        if workspace_role is None:
+            raise HTTPException(status_code=401, detail="Workspace access denied.")
     return {
         "auth_type": "user",
         "actor": user.get("email", "user"),
         "role": user.get("role", "viewer"),
         "user": user,
+        "workspace_id": workspace_id,
+        "workspace_role": workspace_role or "member",
     }
 
 
@@ -268,3 +312,7 @@ def set_user_role(*, user_id: str, role: str) -> dict[str, Any]:
     if not updated:
         raise ValueError("User not found.")
     return updated
+
+
+def get_workspace_role(user_id: str, workspace_id: str) -> Optional[str]:
+    return repository_get_workspace_role(user_id, workspace_id)

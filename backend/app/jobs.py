@@ -312,12 +312,21 @@ def stop_job_worker() -> None:
 
 
 def enqueue_document_processing(
-    *, document_id: str, actor: str, max_attempts: int = WORKER_MAX_ATTEMPTS
+    *,
+    document_id: str,
+    actor: str,
+    workspace_id: Optional[str] = None,
+    max_attempts: int = WORKER_MAX_ATTEMPTS,
 ) -> dict[str, Any]:
     job = create_job(
         job_type="process_document",
-        payload={"document_id": document_id, "actor": actor},
+        payload={
+            "document_id": document_id,
+            "actor": actor,
+            "workspace_id": workspace_id,
+        },
         actor=actor,
+        workspace_id=workspace_id,
         max_attempts=max_attempts,
     )
     if QUEUE_BACKEND == "redis":
@@ -329,9 +338,13 @@ def enqueue_document_processing(
     return job
 
 
-def get_job_by_id(job_id: str) -> dict[str, Any] | None:
-    return get_job(job_id)
+def get_job_by_id(
+    job_id: str, *, workspace_id: Optional[str] = None
+) -> dict[str, Any] | None:
+    return get_job(job_id, workspace_id=workspace_id)
 
 
-def get_jobs(*, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-    return list_jobs(status=status, limit=limit)
+def get_jobs(
+    *, status: str | None = None, workspace_id: Optional[str] = None, limit: int = 100
+) -> list[dict[str, Any]]:
+    return list_jobs(status=status, workspace_id=workspace_id, limit=limit)

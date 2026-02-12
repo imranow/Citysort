@@ -142,6 +142,39 @@ def test_get_single_document(client):
     assert resp.json()["id"] == doc_id
 
 
+def test_document_preview_returns_inline_content_disposition(client):
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("preview.txt", b"Preview me", "text/plain")},
+        data={"source_channel": "test", "process_async": "false"},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json()["id"]
+
+    preview_resp = client.get(f"/api/documents/{doc_id}/preview")
+    assert preview_resp.status_code == 200
+    assert preview_resp.headers["content-disposition"].startswith("inline;")
+
+
+def test_document_preview_404_for_unknown_document(client):
+    resp = client.get("/api/documents/nonexistent-id/preview")
+    assert resp.status_code == 404
+
+
+def test_document_preview_serves_correct_media_type(client):
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("preview.json", b'{"ok": true}', "application/json")},
+        data={"source_channel": "test", "process_async": "false"},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json()["id"]
+
+    preview_resp = client.get(f"/api/documents/{doc_id}/preview")
+    assert preview_resp.status_code == 200
+    assert preview_resp.headers["content-type"].startswith("application/json")
+
+
 def test_get_nonexistent_document(client):
     resp = client.get("/api/documents/nonexistent-id")
     assert resp.status_code == 404

@@ -71,6 +71,7 @@ const respondButton = document.getElementById("respond-btn");
 const detailTabs = document.getElementById("detail-tabs");
 const detailPanelReview = document.getElementById("detail-panel-review");
 const detailPanelDocument = document.getElementById("detail-panel-document");
+const detailPanelPreview = document.getElementById("detail-panel-preview");
 const docDownloadBtn = document.getElementById("doc-download-btn");
 const docReuploadInput = document.getElementById("doc-reupload-input");
 const docReuploadStatus = document.getElementById("doc-reupload-status");
@@ -78,8 +79,15 @@ const docTextPreview = document.getElementById("doc-text-preview");
 const docFieldsEditor = document.getElementById("doc-fields-editor");
 const docFieldsSave = document.getElementById("doc-fields-save");
 const docFieldsStatus = document.getElementById("doc-fields-status");
+const docPreviewStatus = document.getElementById("doc-preview-status");
+const docPreviewContainer = document.getElementById("doc-preview-container");
 let _originalFields = {};
 let _currentDocForDocTab = null;
+let _previewCurrentDocumentId = "";
+let _previewBlobUrl = "";
+let _previewImageZoom = 1;
+const _loadedScriptUrls = new Set();
+const _scriptLoadPromises = new Map();
 
 const rulesMeta = document.getElementById("rules-meta");
 const rulesLoad = document.getElementById("rules-load");
@@ -118,6 +126,29 @@ const responseBodyInput = document.getElementById("response-body-input");
 const responseSendStatus = document.getElementById("response-send-status");
 const responseCopyBtn = document.getElementById("response-copy-btn");
 const responseSendBtn = document.getElementById("response-send-btn");
+const adminTabs = document.getElementById("admin-tabs");
+const adminUsersContent = document.getElementById("admin-users-content");
+const adminBillingContent = document.getElementById("admin-billing-content");
+const adminSystemContent = document.getElementById("admin-system-content");
+const adminAuditContent = document.getElementById("admin-audit-content");
+const adminInvitationsContent = document.getElementById("admin-invitations-content");
+const adminStatus = document.getElementById("admin-status");
+const adminAuditAction = document.getElementById("admin-audit-action");
+const adminAuditActor = document.getElementById("admin-audit-actor");
+const adminAuditApply = document.getElementById("admin-audit-apply");
+const adminAuditPrev = document.getElementById("admin-audit-prev");
+const adminAuditNext = document.getElementById("admin-audit-next");
+const adminAuditPage = document.getElementById("admin-audit-page");
+const adminInviteForm = document.getElementById("admin-invite-form");
+const adminInviteEmail = document.getElementById("admin-invite-email");
+const adminInviteRole = document.getElementById("admin-invite-role");
+const emailPreferencesForm = document.getElementById("email-preferences-form");
+const emailPreferencesStatus = document.getElementById("email-preferences-status");
+const emailPreferenceInputs = Array.from(
+  document.querySelectorAll('input[data-pref-key]')
+);
+const workspaceSwitcher = document.getElementById("workspace-switcher");
+const workspaceSlug = document.getElementById("workspace-slug");
 const AUTH_TOKEN_KEY = "citysort_access_token";
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 let authRedirectInProgress = false;
@@ -126,6 +157,9 @@ let selectedDocumentId = "";
 let activeRules = {};
 let currentUserId = "";
 let currentUserEmail = "";
+let currentUserRole = "viewer";
+let currentWorkspaceId = "";
+let workspaceCache = [];
 let userCache = [];
 let documentsCache = [];
 let bulkMode = false;
@@ -134,6 +168,8 @@ let templateCache = [];
 let notificationsPollHandle = null;
 let classifierInfo = { classifier_provider: "rules" };
 let platformSummaryRetryHandle = null;
+let activeAdminTab = "users";
+let adminAuditOffset = 0;
 
 const TRANSITIONS = {
   ingested: ["needs_review", "routed"],
@@ -169,6 +205,10 @@ const PAGE_CONFIG = {
   rules: {
     title: "Routing Rules",
     subtitle: "Manage classification policy, required fields, and department routing behavior for new intake.",
+  },
+  admin: {
+    title: "Admin",
+    subtitle: "System administration across users, billing, operations health, and audit activity.",
   },
 };
 const PAGE_ALIASES = {
@@ -250,6 +290,10 @@ function applyDashboardPage(page, options = {}) {
 
   if (updateUrlMode) {
     writePageToLocation(normalized, updateUrlMode);
+  }
+
+  if (normalized === "admin") {
+    refreshAdminPageIfActive();
   }
 }
 
@@ -688,12 +732,408 @@ async function loadCurrentUser() {
     const me = await parseJSON(await apiFetch("/api/auth/me"));
     currentUserId = String(me.id || "");
     currentUserEmail = String(me.email || "");
+    currentUserRole = String(me.role || "viewer").toLowerCase();
+    currentWorkspaceId = String(me.workspace_id || currentWorkspaceId || "");
     return me;
   } catch {
     currentUserId = "";
     currentUserEmail = "";
+    currentUserRole = "viewer";
+    currentWorkspaceId = "";
     return null;
   }
+}
+
+function renderWorkspaceSwitcher() {
+  if (!workspaceSwitcher) return;
+  const items = Array.isArray(workspaceCache) ? workspaceCache : [];
+  if (!items.length) {
+    workspaceSwitcher.innerHTML = '<option value="">No workspace</option>';
+    workspaceSwitcher.disabled = true;
+    if (workspaceSlug) workspaceSlug.textContent = "No workspace";
+    return;
+  }
+
+  workspaceSwitcher.disabled = false;
+  workspaceSwitcher.innerHTML = items
+    .map((workspace) => {
+      const id = escapeHtml(String(workspace.id || ""));
+      const name = escapeHtml(String(workspace.name || "Workspace"));
+      return `<option value="${id}">${name}</option>`;
+    })
+    .join("");
+
+  const preferred = String(currentWorkspaceId || "").trim();
+  const hasPreferred = items.some((workspace) => String(workspace.id) === preferred);
+  const activeWorkspaceId = hasPreferred ? preferred : String(items[0].id || "");
+  currentWorkspaceId = activeWorkspaceId;
+  workspaceSwitcher.value = activeWorkspaceId;
+
+  const activeWorkspace = items.find(
+    (workspace) => String(workspace.id || "") === activeWorkspaceId
+  );
+  if (workspaceSlug) {
+    workspaceSlug.textContent = String(
+      (activeWorkspace && activeWorkspace.slug) || "workspace"
+    );
+  }
+}
+
+async function loadWorkspaces() {
+  if (!workspaceSwitcher) return;
+  if (!authToken) {
+    workspaceCache = [];
+    renderWorkspaceSwitcher();
+    return;
+  }
+  try {
+    const data = await parseJSON(await apiFetch("/api/workspaces"));
+    workspaceCache = Array.isArray(data.items) ? data.items : [];
+  } catch {
+    workspaceCache = [];
+  }
+  renderWorkspaceSwitcher();
+}
+
+async function switchWorkspace(workspaceId) {
+  const targetWorkspaceId = String(workspaceId || "").trim();
+  if (!targetWorkspaceId || targetWorkspaceId === currentWorkspaceId) {
+    return;
+  }
+  if (workspaceSwitcher) workspaceSwitcher.disabled = true;
+  try {
+    const data = await parseJSON(
+      await apiFetch(`/api/workspaces/switch/${targetWorkspaceId}`, {
+        method: "POST",
+      })
+    );
+    setAuthToken(String(data.access_token || ""));
+    currentWorkspaceId = targetWorkspaceId;
+    await loadCurrentUser();
+    await loadWorkspaces();
+    await Promise.all([
+      loadUsers(),
+      loadAll(),
+      loadPlatformSummary(),
+      loadNotifications(),
+      loadEmailPreferences(),
+    ]);
+    showToast("Workspace switched.", "success");
+  } catch (error) {
+    await loadWorkspaces();
+    showToast(`Workspace switch failed: ${error.message}`, "error");
+  } finally {
+    if (workspaceSwitcher) workspaceSwitcher.disabled = false;
+  }
+}
+
+function bindWorkspaceSwitcher() {
+  if (!workspaceSwitcher) return;
+  workspaceSwitcher.addEventListener("change", () => {
+    const target = String(workspaceSwitcher.value || "").trim();
+    switchWorkspace(target).catch((error) => {
+      showToast(`Workspace switch failed: ${error.message}`, "error");
+    });
+  });
+}
+
+function setEmailPreferencesStatus(message, isError = false) {
+  if (!emailPreferencesStatus) return;
+  emailPreferencesStatus.textContent = message || "";
+  emailPreferencesStatus.classList.toggle("error", Boolean(isError));
+}
+
+function setEmailPreferencesEnabled(enabled) {
+  emailPreferenceInputs.forEach((input) => {
+    input.disabled = !enabled;
+  });
+  const saveButton = document.getElementById("email-preferences-save");
+  if (saveButton) {
+    saveButton.disabled = !enabled;
+  }
+}
+
+function collectEmailPreferencesPayload() {
+  const payload = {};
+  emailPreferenceInputs.forEach((input) => {
+    const key = String(input.dataset.prefKey || "").trim();
+    if (key) {
+      payload[key] = Boolean(input.checked);
+    }
+  });
+  return payload;
+}
+
+function applyEmailPreferences(prefs) {
+  emailPreferenceInputs.forEach((input) => {
+    const key = String(input.dataset.prefKey || "").trim();
+    if (!key) return;
+    if (Object.prototype.hasOwnProperty.call(prefs, key)) {
+      input.checked = Boolean(prefs[key]);
+    }
+  });
+}
+
+async function loadEmailPreferences() {
+  if (!emailPreferencesForm) return;
+  if (!authToken) {
+    setEmailPreferencesEnabled(false);
+    setEmailPreferencesStatus("Sign in to manage email preferences.", true);
+    return;
+  }
+  setEmailPreferencesEnabled(false);
+  setEmailPreferencesStatus("Loading preferences...");
+  try {
+    const prefs = await parseJSON(await apiFetch("/api/auth/me/email-preferences"));
+    applyEmailPreferences(prefs);
+    setEmailPreferencesStatus("Preferences loaded.");
+  } catch (error) {
+    setEmailPreferencesStatus(`Failed to load preferences: ${error.message}`, true);
+  } finally {
+    setEmailPreferencesEnabled(true);
+  }
+}
+
+async function saveEmailPreferences() {
+  if (!emailPreferencesForm) return;
+  setEmailPreferencesEnabled(false);
+  setEmailPreferencesStatus("Saving preferences...");
+  try {
+    const prefs = await parseJSON(
+      await apiFetch("/api/auth/me/email-preferences", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(collectEmailPreferencesPayload()),
+      })
+    );
+    applyEmailPreferences(prefs);
+    setEmailPreferencesStatus("Preferences saved.");
+    showToast("Email preferences saved", "success");
+  } catch (error) {
+    setEmailPreferencesStatus(`Failed to save preferences: ${error.message}`, true);
+    showToast(`Failed to save preferences: ${error.message}`, "error");
+  } finally {
+    setEmailPreferencesEnabled(true);
+  }
+}
+
+function setAdminStatus(message, isError = false) {
+  if (!adminStatus) return;
+  adminStatus.textContent = message || "";
+  adminStatus.classList.toggle("error", Boolean(isError));
+}
+
+function canAccessAdmin() {
+  return currentUserRole === "admin";
+}
+
+function formatMoneyCents(cents) {
+  const value = Number(cents || 0) / 100;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function renderAdminTable(headers, rows) {
+  const head = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  const body = rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderAdminAccessDenied() {
+  const message = '<div class="preview-empty">Admin access is required for this page.</div>';
+  if (adminUsersContent) adminUsersContent.innerHTML = message;
+  if (adminBillingContent) adminBillingContent.innerHTML = message;
+  if (adminSystemContent) adminSystemContent.innerHTML = message;
+  if (adminAuditContent) adminAuditContent.innerHTML = message;
+  if (adminInvitationsContent) adminInvitationsContent.innerHTML = message;
+}
+
+async function loadAdminUsers() {
+  if (!adminUsersContent) return;
+  if (!canAccessAdmin()) {
+    renderAdminAccessDenied();
+    return;
+  }
+  const data = await parseJSON(await apiFetch("/api/auth/users?limit=300"));
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) {
+    adminUsersContent.innerHTML = '<div class="preview-empty">No users found.</div>';
+    return;
+  }
+  const rows = items.map((user) => [
+    escapeHtml(String(user.full_name || "-")),
+    escapeHtml(String(user.email || "-")),
+    escapeHtml(String(user.role || "-")),
+    escapeHtml(String(user.plan_tier || "free")),
+    escapeHtml(String(user.status || "-")),
+  ]);
+  adminUsersContent.innerHTML = renderAdminTable(
+    ["Name", "Email", "Role", "Plan", "Status"],
+    rows
+  );
+}
+
+async function loadAdminBilling() {
+  if (!adminBillingContent) return;
+  if (!canAccessAdmin()) {
+    renderAdminAccessDenied();
+    return;
+  }
+  const data = await parseJSON(await apiFetch("/api/admin/billing-stats"));
+  const dist = Object.entries(data.plan_distribution || {})
+    .map(([plan, count]) => `${escapeHtml(plan)}: ${Number(count || 0)}`)
+    .join(" · ");
+  const payments = Array.isArray(data.recent_payments) ? data.recent_payments : [];
+  const paymentRows = payments.length
+    ? renderAdminTable(
+      ["Date", "User", "Event", "Amount"],
+      payments.map((payment) => [
+        escapeHtml(safeDate(payment.created_at || "-")),
+        escapeHtml(String(payment.user_email || payment.user_id || "-")),
+        escapeHtml(String(payment.event_type || "-")),
+        escapeHtml(formatMoneyCents(payment.amount_cents || 0)),
+      ])
+    )
+    : '<div class="preview-empty">No recent payments.</div>';
+
+  adminBillingContent.innerHTML = `
+    <div class="admin-kv-grid">
+      <div class="admin-card"><strong>Active subscriptions</strong><div>${Number(data.active_subscriptions || 0)}</div></div>
+      <div class="admin-card"><strong>MRR</strong><div>${escapeHtml(formatMoneyCents(data.mrr_cents || 0))}</div></div>
+      <div class="admin-card"><strong>Revenue (30d)</strong><div>${escapeHtml(formatMoneyCents(data.revenue_last_30_days_cents || 0))}</div></div>
+      <div class="admin-card"><strong>Plan distribution</strong><div>${dist || "none"}</div></div>
+    </div>
+    <h4>Recent Payments</h4>
+    ${paymentRows}
+  `;
+}
+
+async function loadAdminSystemHealth() {
+  if (!adminSystemContent) return;
+  if (!canAccessAdmin()) {
+    renderAdminAccessDenied();
+    return;
+  }
+  const data = await parseJSON(await apiFetch("/api/admin/system-health"));
+  const queue = data.job_queue || {};
+  const docs = data.documents_last_24h || {};
+  const connectivity = data.connectivity || {};
+  adminSystemContent.innerHTML = `
+    <div class="admin-kv-grid">
+      <div class="admin-card"><strong>Queued jobs</strong><div>${Number(queue.queued || 0)}</div></div>
+      <div class="admin-card"><strong>Running jobs</strong><div>${Number(queue.running || 0)}</div></div>
+      <div class="admin-card"><strong>Failed jobs</strong><div>${Number(queue.failed || 0)}</div></div>
+      <div class="admin-card"><strong>Documents (24h)</strong><div>${Number(docs.total || 0)}</div></div>
+      <div class="admin-card"><strong>Auto-routed (24h)</strong><div>${Number(docs.auto_routed || 0)}</div></div>
+      <div class="admin-card"><strong>Needs review (24h)</strong><div>${Number(docs.needs_review || 0)}</div></div>
+      <div class="admin-card"><strong>Failed docs (24h)</strong><div>${Number(docs.failed || 0)}</div></div>
+      <div class="admin-card"><strong>Errors (24h)</strong><div>${Number(data.errors_last_24h || 0)}</div></div>
+      <div class="admin-card"><strong>Emails sent (24h)</strong><div>${Number((data.emails_last_24h || {}).sent || 0)}</div></div>
+      <div class="admin-card"><strong>Emails failed (24h)</strong><div>${Number((data.emails_last_24h || {}).failed || 0)}</div></div>
+      <div class="admin-card"><strong>DB status</strong><div>${escapeHtml(String((connectivity.database || {}).status || "unknown"))}</div></div>
+      <div class="admin-card"><strong>Storage status</strong><div>${escapeHtml(String((connectivity.storage || {}).status || "unknown"))}</div></div>
+    </div>
+  `;
+}
+
+async function loadAdminAuditLog(offset = 0) {
+  if (!adminAuditContent) return;
+  if (!canAccessAdmin()) {
+    renderAdminAccessDenied();
+    return;
+  }
+  adminAuditOffset = Math.max(0, Number(offset || 0));
+  const searchParams = new URLSearchParams();
+  searchParams.set("limit", "25");
+  searchParams.set("offset", String(adminAuditOffset));
+  const actionFilter = String((adminAuditAction && adminAuditAction.value) || "").trim();
+  const actorFilter = String((adminAuditActor && adminAuditActor.value) || "").trim();
+  if (actionFilter) searchParams.set("action", actionFilter);
+  if (actorFilter) searchParams.set("actor", actorFilter);
+  const data = await parseJSON(await apiFetch(`/api/admin/audit-log?${searchParams.toString()}`));
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) {
+    adminAuditContent.innerHTML = '<div class="preview-empty">No audit events found.</div>';
+  } else {
+    adminAuditContent.innerHTML = renderAdminTable(
+      ["Time", "Action", "Actor", "Document", "Details"],
+      items.map((item) => [
+        escapeHtml(safeDate(item.created_at || "-")),
+        escapeHtml(String(item.action || "-")),
+        escapeHtml(String(item.actor || "-")),
+        escapeHtml(String(item.filename || item.document_id || "-")),
+        escapeHtml(String(item.details || "")),
+      ])
+    );
+  }
+  const pageNumber = Math.floor(adminAuditOffset / 25) + 1;
+  if (adminAuditPage) {
+    adminAuditPage.textContent = `Page ${pageNumber}`;
+  }
+  if (adminAuditPrev) {
+    adminAuditPrev.disabled = adminAuditOffset <= 0;
+  }
+  if (adminAuditNext) {
+    adminAuditNext.disabled = (adminAuditOffset + 25) >= Number(data.total || 0);
+  }
+}
+
+async function loadAdminInvitations() {
+  if (!adminInvitationsContent) return;
+  if (!canAccessAdmin()) {
+    renderAdminAccessDenied();
+    return;
+  }
+  const data = await parseJSON(await apiFetch("/api/platform/invitations?limit=100"));
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) {
+    adminInvitationsContent.innerHTML = '<div class="preview-empty">No invitations found.</div>';
+    return;
+  }
+  adminInvitationsContent.innerHTML = renderAdminTable(
+    ["Email", "Role", "Status", "Created", "Expires"],
+    items.map((invitation) => [
+      escapeHtml(String(invitation.email || "-")),
+      escapeHtml(String(invitation.role || "-")),
+      escapeHtml(String(invitation.status || "-")),
+      escapeHtml(safeDate(invitation.created_at || "-")),
+      escapeHtml(safeDate(invitation.expires_at || "-")),
+    ])
+  );
+}
+
+function switchAdminTab(tabName) {
+  if (!adminTabs) return;
+  activeAdminTab = tabName || "users";
+  adminTabs.querySelectorAll(".admin-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminTab === activeAdminTab);
+  });
+  document.querySelectorAll(".admin-tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.adminPanel === activeAdminTab);
+  });
+
+  const loaderByTab = {
+    users: loadAdminUsers,
+    billing: loadAdminBilling,
+    system: loadAdminSystemHealth,
+    audit: () => loadAdminAuditLog(adminAuditOffset),
+    invitations: loadAdminInvitations,
+  };
+  const loader = loaderByTab[activeAdminTab];
+  if (!loader) return;
+  loader().catch((error) => {
+    setAdminStatus(`Admin tab failed to load: ${error.message}`, true);
+  });
+}
+
+function refreshAdminPageIfActive() {
+  if (activeDashboardPage !== "admin") return;
+  switchAdminTab(activeAdminTab);
 }
 
 async function loadUsers() {
@@ -1159,6 +1599,242 @@ function hideReviewDetail() {
   if (reviewDetailContent) reviewDetailContent.style.display = "none";
 }
 
+function setPreviewStatus(message, isError = false) {
+  if (!docPreviewStatus) return;
+  docPreviewStatus.textContent = message || "";
+  docPreviewStatus.classList.toggle("error", Boolean(isError));
+}
+
+function resetPreviewContainer(message = "Preview not loaded.") {
+  if (_previewBlobUrl) {
+    URL.revokeObjectURL(_previewBlobUrl);
+    _previewBlobUrl = "";
+  }
+  _previewCurrentDocumentId = "";
+  _previewImageZoom = 1;
+  if (docPreviewContainer) {
+    docPreviewContainer.innerHTML = `<div class="preview-empty">${escapeHtml(message)}</div>`;
+  }
+}
+
+function loadScript(src) {
+  if (_loadedScriptUrls.has(src)) {
+    return Promise.resolve();
+  }
+  if (_scriptLoadPromises.has(src)) {
+    return _scriptLoadPromises.get(src);
+  }
+  const promise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      _loadedScriptUrls.add(src);
+      _scriptLoadPromises.delete(src);
+      resolve();
+    };
+    script.onerror = () => {
+      _scriptLoadPromises.delete(src);
+      reject(new Error(`Failed to load script: ${src}`));
+    };
+    document.head.appendChild(script);
+  });
+  _scriptLoadPromises.set(src, promise);
+  return promise;
+}
+
+function renderTextPreview(text) {
+  if (!docPreviewContainer) return;
+  const pre = document.createElement("pre");
+  pre.className = "preview-text";
+  pre.textContent = text || "(empty file)";
+  docPreviewContainer.innerHTML = "";
+  docPreviewContainer.appendChild(pre);
+}
+
+function renderPdfPreview(blobUrl) {
+  if (!docPreviewContainer) return;
+  const iframe = document.createElement("iframe");
+  iframe.className = "preview-pdf-frame";
+  iframe.src = blobUrl;
+  iframe.setAttribute("title", "Document preview");
+  docPreviewContainer.innerHTML = "";
+  docPreviewContainer.appendChild(iframe);
+}
+
+function renderImagePreview(blobUrl) {
+  if (!docPreviewContainer) return;
+  docPreviewContainer.innerHTML = "";
+  const toolbar = document.createElement("div");
+  toolbar.className = "preview-image-toolbar";
+
+  const zoomOut = document.createElement("button");
+  zoomOut.type = "button";
+  zoomOut.className = "secondary";
+  zoomOut.textContent = "Zoom -";
+
+  const zoomIn = document.createElement("button");
+  zoomIn.type = "button";
+  zoomIn.className = "secondary";
+  zoomIn.textContent = "Zoom +";
+
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "secondary";
+  reset.textContent = "Reset";
+
+  toolbar.appendChild(zoomOut);
+  toolbar.appendChild(zoomIn);
+  toolbar.appendChild(reset);
+
+  const wrap = document.createElement("div");
+  wrap.className = "preview-image-wrap";
+
+  const img = document.createElement("img");
+  img.className = "preview-image";
+  img.src = blobUrl;
+  img.alt = "Document image preview";
+
+  const applyZoom = () => {
+    img.style.transform = `scale(${_previewImageZoom})`;
+  };
+  zoomIn.addEventListener("click", () => {
+    _previewImageZoom = Math.min(4, _previewImageZoom + 0.25);
+    applyZoom();
+  });
+  zoomOut.addEventListener("click", () => {
+    _previewImageZoom = Math.max(0.25, _previewImageZoom - 0.25);
+    applyZoom();
+  });
+  reset.addEventListener("click", () => {
+    _previewImageZoom = 1;
+    applyZoom();
+  });
+
+  wrap.appendChild(img);
+  docPreviewContainer.appendChild(toolbar);
+  docPreviewContainer.appendChild(wrap);
+  applyZoom();
+}
+
+async function renderDocxPreview(blob) {
+  if (!docPreviewContainer) return;
+  await loadScript("https://unpkg.com/docx-preview@0.3.1/dist/docx-preview.min.js");
+  const container = document.createElement("div");
+  container.className = "preview-docx";
+  docPreviewContainer.innerHTML = "";
+  docPreviewContainer.appendChild(container);
+  if (!window.docx || typeof window.docx.renderAsync !== "function") {
+    throw new Error("DOCX renderer failed to initialize.");
+  }
+  await window.docx.renderAsync(blob, container);
+}
+
+async function renderXlsxPreview(blob) {
+  if (!docPreviewContainer) return;
+  await loadScript(
+    "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+  );
+  if (!window.XLSX || !window.XLSX.utils || typeof window.XLSX.read !== "function") {
+    throw new Error("XLSX renderer failed to initialize.");
+  }
+  const arrayBuffer = await blob.arrayBuffer();
+  const workbook = window.XLSX.read(arrayBuffer, { type: "array" });
+  const firstSheet = workbook.SheetNames[0];
+  const sheet = firstSheet ? workbook.Sheets[firstSheet] : null;
+  if (!sheet) {
+    throw new Error("No worksheet data found.");
+  }
+  const html = window.XLSX.utils.sheet_to_html(sheet, {
+    editable: false,
+    id: "preview-xlsx-table",
+  });
+  const container = document.createElement("div");
+  container.className = "preview-xlsx";
+  container.innerHTML = html;
+  docPreviewContainer.innerHTML = "";
+  docPreviewContainer.appendChild(container);
+}
+
+function renderUnsupportedPreview() {
+  if (!docPreviewContainer) return;
+  docPreviewContainer.innerHTML = "";
+  const message = document.createElement("div");
+  message.className = "preview-empty";
+  message.textContent = "Preview is not available for this file type.";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  button.textContent = "Download Original";
+  button.addEventListener("click", () => {
+    if (docDownloadBtn) docDownloadBtn.click();
+  });
+  docPreviewContainer.appendChild(message);
+  docPreviewContainer.appendChild(button);
+}
+
+async function loadDocumentPreview(docId) {
+  if (!docPreviewContainer || !docId) return;
+  if (_previewCurrentDocumentId === docId) {
+    return;
+  }
+
+  setPreviewStatus("Loading preview...");
+  resetPreviewContainer("Loading preview...");
+
+  const response = await apiFetch(`/api/documents/${docId}/preview`);
+  if (!response.ok) {
+    let detail = "Preview request failed.";
+    try {
+      const errorData = await response.json();
+      detail = errorData.detail || detail;
+    } catch {
+      // Keep fallback message.
+    }
+    throw new Error(detail);
+  }
+
+  const blob = await response.blob();
+  const contentType = String(
+    response.headers.get("content-type")
+    || (_currentDocForDocTab && _currentDocForDocTab.content_type)
+    || ""
+  ).toLowerCase();
+  const filename = String((_currentDocForDocTab && _currentDocForDocTab.filename) || "");
+  const extension = filename.includes(".")
+    ? filename.split(".").pop().toLowerCase()
+    : "";
+
+  if (contentType.startsWith("text/") || contentType.includes("application/json")) {
+    renderTextPreview(await blob.text());
+  } else if (contentType.includes("application/pdf")) {
+    _previewBlobUrl = URL.createObjectURL(blob);
+    renderPdfPreview(_previewBlobUrl);
+  } else if (contentType.startsWith("image/")) {
+    _previewBlobUrl = URL.createObjectURL(blob);
+    renderImagePreview(_previewBlobUrl);
+  } else if (
+    extension === "docx"
+    || contentType.includes(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+  ) {
+    await renderDocxPreview(blob);
+  } else if (
+    extension === "xlsx"
+    || contentType.includes(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+  ) {
+    await renderXlsxPreview(blob);
+  } else {
+    renderUnsupportedPreview();
+  }
+
+  _previewCurrentDocumentId = docId;
+  setPreviewStatus("Preview loaded.");
+}
+
 /* ── Detail-pane tab switching ────────────────────── */
 
 function switchDetailTab(tabName) {
@@ -1169,6 +1845,20 @@ function switchDetailTab(tabName) {
   document.querySelectorAll(".detail-tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.detailPanel === tabName);
   });
+  if (tabName === "preview") {
+    const docId = _currentDocForDocTab && _currentDocForDocTab.id
+      ? String(_currentDocForDocTab.id)
+      : "";
+    if (!docId) {
+      if (docPreviewStatus) docPreviewStatus.textContent = "Select a document to preview.";
+      return;
+    }
+    loadDocumentPreview(docId).catch((error) => {
+      if (docPreviewStatus) {
+        docPreviewStatus.textContent = `Preview unavailable: ${error.message}`;
+      }
+    });
+  }
 }
 
 /* ── Extracted fields editor ─────────────────────── */
@@ -1340,6 +2030,8 @@ function renderReviewDocument(doc, auditItems) {
   renderFieldsEditor(doc.extracted_fields, doc.missing_fields);
   if (docReuploadStatus) docReuploadStatus.textContent = "";
   if (docFieldsStatus) docFieldsStatus.textContent = "";
+  resetPreviewContainer("Open the Preview tab to load this document.");
+  setPreviewStatus("Ready to preview.");
 
   // Reset to Review tab when selecting a new document
   switchDetailTab("review");
@@ -1368,6 +2060,8 @@ function clearReviewSelection(message) {
   if (docReuploadStatus) docReuploadStatus.textContent = "";
   if (docFieldsStatus) docFieldsStatus.textContent = "";
   if (docFieldsSave) docFieldsSave.disabled = true;
+  resetPreviewContainer();
+  setPreviewStatus("Open a document to preview.");
   if (reviewAssignedTo) {
     reviewAssignedTo.value = "";
     reviewAssignedTo.dataset.documentId = "";
@@ -2525,6 +3219,7 @@ function bindRulesActions() {
 function bindDetailTabs() {
   if (!detailTabs) return;
   detailTabs.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
     const tab = event.target.closest(".detail-tab");
     if (!tab) return;
     switchDetailTab(tab.dataset.detailTab);
@@ -2979,6 +3674,86 @@ function bindPlatformActions() {
   }
 }
 
+function bindEmailPreferences() {
+  if (!emailPreferencesForm) return;
+  emailPreferencesForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await saveEmailPreferences();
+  });
+  emailPreferenceInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      setEmailPreferencesStatus("Unsaved changes.");
+    });
+  });
+}
+
+function bindAdminDashboard() {
+  if (adminTabs) {
+    adminTabs.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const tab = event.target.closest(".admin-tab");
+      if (!tab) return;
+      switchAdminTab(String(tab.dataset.adminTab || "users"));
+    });
+  }
+
+  if (adminAuditApply) {
+    adminAuditApply.addEventListener("click", () => {
+      loadAdminAuditLog(0).catch((error) => {
+        setAdminStatus(`Failed to load audit log: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (adminAuditPrev) {
+    adminAuditPrev.addEventListener("click", () => {
+      const nextOffset = Math.max(0, adminAuditOffset - 25);
+      loadAdminAuditLog(nextOffset).catch((error) => {
+        setAdminStatus(`Failed to load audit log: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (adminAuditNext) {
+    adminAuditNext.addEventListener("click", () => {
+      loadAdminAuditLog(adminAuditOffset + 25).catch((error) => {
+        setAdminStatus(`Failed to load audit log: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (adminInviteForm) {
+    adminInviteForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const email = String((adminInviteEmail && adminInviteEmail.value) || "").trim();
+      const role = String((adminInviteRole && adminInviteRole.value) || "member").trim();
+      if (!email) {
+        setAdminStatus("Invite email is required.", true);
+        return;
+      }
+      try {
+        const data = await parseJSON(
+          await apiFetch("/api/platform/invitations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email,
+              role,
+              actor: "dashboard_admin",
+              expires_in_days: 14,
+            }),
+          })
+        );
+        setAdminStatus(`Invitation created for ${data.invitation.email}.`);
+        if (adminInviteEmail) adminInviteEmail.value = "";
+        await loadAdminInvitations();
+      } catch (error) {
+        setAdminStatus(`Failed to create invitation: ${error.message}`, true);
+      }
+    });
+  }
+}
+
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const files = Array.from(fileInput.files || []);
@@ -3241,6 +4016,9 @@ bindDocumentClicks();
 bindConnectors();
 bindRulesActions();
 bindPlatformActions();
+bindEmailPreferences();
+bindAdminDashboard();
+bindWorkspaceSwitcher();
 bindDetailTabs();
 bindDocumentTab();
 bindAdvancedActions();
@@ -3308,7 +4086,9 @@ if (shortcutsCloseBtn) {
 
 (async () => {
   await loadCurrentUser();
-  await loadUsers();
+  await loadWorkspaces();
+  refreshAdminPageIfActive();
+  await Promise.all([loadUsers(), loadEmailPreferences()]);
   await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary(), loadNotifications()]);
   startNotificationPolling();
 

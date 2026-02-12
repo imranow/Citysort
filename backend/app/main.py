@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 import json
 import logging
 import mimetypes
+import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +21,9 @@ from .auth import (
     authenticate_user,
     authorize_request,
     bootstrap_admin,
+    create_access_token,
     create_user_account,
+    get_workspace_role as get_user_workspace_role,
     get_users,
     role_allows,
     set_user_role,
@@ -85,6 +88,7 @@ from .observability import (
 from .document_tasks import process_document_by_id
 from .pipeline import route_document
 from .repository import (
+    add_workspace_member,
     count_api_keys,
     count_invitations,
     count_unassigned_manual_documents,
@@ -94,10 +98,15 @@ from .repository import (
     create_document,
     create_outbound_email,
     create_invitation,
+    create_workspace,
     get_latest_deployment,
     get_analytics_snapshot,
     get_document,
+    get_default_workspace_for_user,
     get_queue_snapshot,
+    get_workspace,
+    list_user_workspaces,
+    list_workspace_members,
     list_api_keys,
     list_audit_events,
     list_deployments,
@@ -108,9 +117,13 @@ from .repository import (
     revoke_api_key,
     get_active_subscription,
     mark_invitation_accepted,
+    remove_workspace_member,
     validate_invitation,
     update_outbound_email,
     update_document,
+    update_workspace,
+    get_user_email_preferences,
+    update_user_email_preferences,
 )
 from .notifications import (
     count_unread,
@@ -222,6 +235,16 @@ from .schemas import (
     PlansResponse,
     PortalResponse,
     SubscriptionResponse,
+    WorkspaceCreateRequest,
+    WorkspaceListResponse,
+    WorkspaceMemberInviteRequest,
+    WorkspaceMemberRecord,
+    WorkspaceMemberUpdateRequest,
+    WorkspaceRecord,
+    WorkspaceSwitchResponse,
+    WorkspaceUpdateRequest,
+    EmailPreferencesResponse,
+    EmailPreferencesUpdateRequest,
     UserCreateRequest,
     UserListResponse,
     UserRecord,
@@ -482,6 +505,7 @@ def _export_approved_snapshot(
             action="approved_exported",
             actor=actor,
             details=f"status={status} trigger={trigger} path={target_path}",
+            workspace_id=_coerce_optional_text(document.get("workspace_id")),
         )
     except Exception as exc:  # pragma: no cover - runtime safety
         logger.warning(
@@ -496,6 +520,7 @@ def _export_approved_snapshot(
                 action="approved_export_failed",
                 actor=actor,
                 details=f"trigger={trigger} error={exc}",
+                workspace_id=_coerce_optional_text(document.get("workspace_id")),
             )
         except Exception:
             pass
@@ -508,6 +533,69 @@ def _enforce(
     allow_api_key: bool = True,
 ) -> dict[str, object]:
     return authorize_request(request, required_role=role, allow_api_key=allow_api_key)
+
+
+def _identity_workspace_id(identity: dict[str, object]) -> Optional[str]:
+    workspace_id = identity.get("workspace_id")
+    if workspace_id is None:
+        return None
+    return str(workspace_id)
+
+
+def _resolve_workspace_id(identity: dict[str, object]) -> Optional[str]:
+    workspace_id = _identity_workspace_id(identity)
+    if workspace_id:
+        return workspace_id
+    user = identity.get("user")
+    if isinstance(user, dict):
+        default_workspace = get_default_workspace_for_user(str(user.get("id", "")))
+        if default_workspace and default_workspace.get("id"):
+            return str(default_workspace["id"])
+    return None
+
+
+def _require_workspace(identity: dict[str, object]) -> str:
+    workspace_id = _resolve_workspace_id(identity)
+    if workspace_id:
+        return workspace_id
+    raise HTTPException(status_code=400, detail="Workspace context required.")
+
+
+def _workspace_role_allows(current_role: str, required_role: str) -> bool:
+    order = {"member": 1, "operator": 2, "admin": 3}
+    return order.get(current_role, 0) >= order.get(required_role, 0)
+
+
+def _enforce_workspace_role(
+    identity: dict[str, object], workspace_id: str, required_role: str = "member"
+) -> None:
+    user = identity.get("user")
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="User session required.")
+    role = get_user_workspace_role(str(user.get("id", "")), workspace_id)
+    if role is None:
+        raise HTTPException(status_code=403, detail="Workspace access denied.")
+    if not _workspace_role_allows(str(role), required_role):
+        raise HTTPException(
+            status_code=403, detail="Workspace role permissions required."
+        )
+
+
+def _workspace_record_from_row(row: dict[str, object]) -> WorkspaceRecord:
+    settings_raw = row.get("settings")
+    settings: dict[str, object]
+    if isinstance(settings_raw, str):
+        try:
+            settings = json.loads(settings_raw) if settings_raw else {}
+        except Exception:
+            settings = {}
+    elif isinstance(settings_raw, dict):
+        settings = dict(settings_raw)
+    else:
+        settings = {}
+    payload = dict(row)
+    payload["settings"] = settings
+    return WorkspaceRecord(**payload)
 
 
 def _database_health() -> ServiceHealth:
@@ -796,14 +884,54 @@ def auth_signup(payload: AuthSignupRequest) -> AuthResponse:
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        mark_invitation_accepted(int(invitation["id"]))
+        mark_invitation_accepted(
+            int(invitation["id"]),
+            workspace_id=_coerce_optional_text(invitation.get("workspace_id")),
+        )
     except ValueError:
         logger.warning(
             "Invitation %s could not be marked accepted after successful signup.",
             invitation.get("id"),
         )
 
-    token = create_access_token(user_id=user["id"], role=user["role"])
+    invitation_workspace_id = invitation.get("workspace_id")
+    if invitation_workspace_id:
+        try:
+            add_workspace_member(
+                workspace_id=str(invitation_workspace_id),
+                user_id=user["id"],
+                role=invited_role
+                if invited_role in {"admin", "operator"}
+                else "member",
+            )
+        except Exception:
+            logger.debug(
+                "Failed to add invited user to workspace %s",
+                invitation_workspace_id,
+                exc_info=True,
+            )
+
+    token = create_access_token(
+        user_id=user["id"],
+        role=user["role"],
+        workspace_id=str(invitation_workspace_id or user.get("workspace_id") or ""),
+    )
+
+    # Send welcome email (fire-and-forget)
+    try:
+        from .account_emails import send_welcome_email
+
+        send_welcome_email(
+            user["email"],
+            user.get("full_name"),
+            user_id=user["id"],
+            workspace_id=_coerce_optional_text(
+                invitation_workspace_id or user.get("workspace_id")
+            ),
+        )
+    except Exception:
+        logger.debug("Welcome email failed (non-blocking)", exc_info=True)
+
     return AuthResponse(access_token=token, user=UserRecord(**user))
 
 
@@ -847,7 +975,36 @@ def auth_me(request: Request) -> UserRecord:
                 updated_at=now,
             )
         raise HTTPException(status_code=401, detail="User session required.")
-    return UserRecord(**user)
+    payload = dict(user)
+    active_workspace_id = _resolve_workspace_id(identity)
+    if active_workspace_id:
+        payload["workspace_id"] = active_workspace_id
+    return UserRecord(**payload)
+
+
+@app.get("/api/auth/me/email-preferences", response_model=EmailPreferencesResponse)
+def get_email_preferences(request: Request) -> EmailPreferencesResponse:
+    """Return the current user's email notification preferences."""
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+    prefs = get_user_email_preferences(user["id"])
+    return EmailPreferencesResponse(**prefs)
+
+
+@app.put("/api/auth/me/email-preferences", response_model=EmailPreferencesResponse)
+def update_email_preferences(
+    payload: EmailPreferencesUpdateRequest, request: Request
+) -> EmailPreferencesResponse:
+    """Update the current user's email notification preferences."""
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    merged = update_user_email_preferences(user["id"], updates)
+    return EmailPreferencesResponse(**merged)
 
 
 @app.get("/api/auth/users", response_model=UserListResponse)
@@ -886,6 +1043,151 @@ def auth_update_user_role(
     return UserRecord(**updated)
 
 
+@app.post("/api/workspaces", response_model=WorkspaceRecord)
+def create_workspace_endpoint(
+    payload: WorkspaceCreateRequest, request: Request
+) -> WorkspaceRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="User session required.")
+    workspace = create_workspace(name=payload.name, owner_id=user["id"])
+    return _workspace_record_from_row(workspace)
+
+
+@app.get("/api/workspaces", response_model=WorkspaceListResponse)
+def list_workspaces_endpoint(request: Request) -> WorkspaceListResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="User session required.")
+    rows = list_user_workspaces(user["id"])
+    return WorkspaceListResponse(items=[_workspace_record_from_row(r) for r in rows])
+
+
+@app.get("/api/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def get_workspace_endpoint(workspace_id: str, request: Request) -> WorkspaceRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    row = get_workspace(workspace_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return _workspace_record_from_row(row)
+
+
+@app.patch("/api/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def update_workspace_endpoint(
+    workspace_id: str, payload: WorkspaceUpdateRequest, request: Request
+) -> WorkspaceRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    updated = update_workspace(
+        workspace_id,
+        name=payload.name,
+        settings=payload.settings,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return _workspace_record_from_row(updated)
+
+
+@app.post(
+    "/api/workspaces/{workspace_id}/members", response_model=InvitationCreateResponse
+)
+def invite_workspace_member(
+    workspace_id: str,
+    payload: WorkspaceMemberInviteRequest,
+    request: Request,
+) -> InvitationCreateResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    invitation, raw_token = create_invitation(
+        workspace_id=workspace_id,
+        email=payload.email.strip().lower(),
+        role=payload.role.strip().lower(),
+        actor=str(identity.get("actor", "workspace_admin")),
+        expires_in_days=7,
+    )
+    invite_link = f"{str(request.base_url).rstrip('/')}/invite/{raw_token}"
+    try:
+        from .account_emails import send_invitation_email
+
+        send_invitation_email(
+            payload.email.strip().lower(),
+            invite_link,
+            str(identity.get("actor", "Workspace administrator")),
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        logger.debug(
+            "Workspace invitation email failed (non-blocking)",
+            exc_info=True,
+        )
+    return InvitationCreateResponse(
+        invitation=invitation,
+        invite_token=raw_token,
+        invite_link=invite_link,
+    )
+
+
+@app.get("/api/workspaces/{workspace_id}/members")
+def list_workspace_members_endpoint(
+    workspace_id: str, request: Request
+) -> dict[str, list[WorkspaceMemberRecord]]:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    rows = list_workspace_members(workspace_id)
+    return {"items": [WorkspaceMemberRecord(**row) for row in rows]}
+
+
+@app.delete("/api/workspaces/{workspace_id}/members/{user_id}")
+def remove_workspace_member_endpoint(
+    workspace_id: str, user_id: str, request: Request
+) -> dict[str, bool]:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    removed = remove_workspace_member(workspace_id=workspace_id, user_id=user_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Workspace member not found.")
+    return {"removed": True}
+
+
+@app.patch("/api/workspaces/{workspace_id}/members/{user_id}")
+def update_workspace_member_role_endpoint(
+    workspace_id: str,
+    user_id: str,
+    payload: WorkspaceMemberUpdateRequest,
+    request: Request,
+) -> WorkspaceMemberRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    updated = add_workspace_member(
+        workspace_id=workspace_id, user_id=user_id, role=payload.role
+    )
+    return WorkspaceMemberRecord(**updated)
+
+
+@app.post(
+    "/api/workspaces/switch/{workspace_id}", response_model=WorkspaceSwitchResponse
+)
+def switch_workspace(workspace_id: str, request: Request) -> WorkspaceSwitchResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not isinstance(user, dict):
+        raise HTTPException(status_code=401, detail="User session required.")
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    workspace = get_workspace(workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    token = create_access_token(
+        user_id=user["id"], role=user.get("role", "viewer"), workspace_id=workspace_id
+    )
+    return WorkspaceSwitchResponse(
+        access_token=token,
+        workspace=_workspace_record_from_row(workspace),
+    )
+
+
 # --- Billing / Stripe ---
 
 
@@ -906,7 +1208,8 @@ def billing_subscription(request: Request) -> SubscriptionResponse:
     if not user:
         raise HTTPException(status_code=401, detail="User session required.")
 
-    sub = get_active_subscription(user["id"])
+    workspace_id = _resolve_workspace_id(identity)
+    sub = get_active_subscription(user["id"], workspace_id=workspace_id)
     if sub:
         return SubscriptionResponse(
             plan_tier=sub["plan_tier"],
@@ -915,8 +1218,13 @@ def billing_subscription(request: Request) -> SubscriptionResponse:
             current_period_end=sub.get("current_period_end"),
             stripe_enabled=STRIPE_ENABLED,
         )
+    workspace_plan = None
+    if workspace_id:
+        workspace = get_workspace(workspace_id)
+        if workspace:
+            workspace_plan = workspace.get("plan_tier")
     return SubscriptionResponse(
-        plan_tier=user.get("plan_tier", "free"),
+        plan_tier=str(workspace_plan or user.get("plan_tier", "free")),
         status="active",
         stripe_enabled=STRIPE_ENABLED,
     )
@@ -929,11 +1237,13 @@ def billing_checkout(request: Request, payload: CheckoutRequest) -> CheckoutResp
     user = identity.get("user")
     if not user:
         raise HTTPException(status_code=401, detail="User session required.")
+    workspace_id = _resolve_workspace_id(identity)
 
     base_url = str(request.base_url).rstrip("/")
     checkout_url = create_checkout_session(
         user_id=user["id"],
         user_email=user["email"],
+        workspace_id=workspace_id,
         plan_tier=payload.plan_tier,
         billing_type=payload.billing_type,
         success_url=f"{base_url}/app?billing=success",
@@ -950,7 +1260,14 @@ def billing_portal(request: Request) -> PortalResponse:
     if not user:
         raise HTTPException(status_code=401, detail="User session required.")
 
-    stripe_customer_id = user.get("stripe_customer_id")
+    workspace_id = _resolve_workspace_id(identity)
+    stripe_customer_id = None
+    if workspace_id:
+        workspace = get_workspace(workspace_id)
+        if workspace:
+            stripe_customer_id = workspace.get("stripe_customer_id")
+    if not stripe_customer_id:
+        stripe_customer_id = user.get("stripe_customer_id")
     if not stripe_customer_id:
         raise HTTPException(
             status_code=400, detail="No Stripe customer linked to this account."
@@ -984,11 +1301,16 @@ async def upload_document(
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
     actor = str(identity.get("actor", "upload_portal"))
+    workspace_id = _resolve_workspace_id(identity)
 
     # Plan enforcement: check document upload limits
     user = identity.get("user")
     if user and STRIPE_ENABLED:
-        enforce_plan_limits(user["id"], "upload_document")
+        enforce_plan_limits(
+            user["id"],
+            "upload_document",
+            workspace_id=workspace_id,
+        )
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
@@ -1014,6 +1336,7 @@ async def upload_document(
     create_document(
         document={
             "id": document_id,
+            "workspace_id": workspace_id,
             "filename": file.filename,
             "storage_path": str(file_path),
             "source_channel": source_channel,
@@ -1032,14 +1355,19 @@ async def upload_document(
         action="uploaded",
         actor=actor,
         details=f"source_channel={source_channel} file={file.filename}",
+        workspace_id=workspace_id,
     )
 
     if process_async:
-        enqueue_document_processing(document_id=document_id, actor=actor)
+        enqueue_document_processing(
+            document_id=document_id,
+            actor=actor,
+            workspace_id=workspace_id,
+        )
     else:
         process_document_by_id(document_id, actor=actor)
 
-    refreshed = get_document(document_id)
+    refreshed = get_document(document_id, workspace_id=workspace_id)
     if not refreshed:
         raise HTTPException(status_code=500, detail="Unable to load processed document")
 
@@ -1053,6 +1381,7 @@ def import_documents_from_database(
 ) -> DatabaseImportResponse:
     identity = _enforce(request, role="operator")
     actor = str(identity.get("actor", payload.actor or "database_importer"))
+    workspace_id = _resolve_workspace_id(identity)
 
     try:
         connection = connect_external_database(payload.database_url)
@@ -1139,6 +1468,7 @@ def import_documents_from_database(
                 create_document(
                     document={
                         "id": document_id,
+                        "workspace_id": workspace_id,
                         "filename": filename,
                         "storage_path": str(storage_path),
                         "source_channel": payload.source_channel,
@@ -1157,16 +1487,21 @@ def import_documents_from_database(
                     action="database_imported",
                     actor=actor,
                     details=f"source_channel={payload.source_channel} row={index}",
+                    workspace_id=workspace_id,
                 )
 
                 if payload.process_async:
-                    enqueue_document_processing(document_id=document_id, actor=actor)
+                    enqueue_document_processing(
+                        document_id=document_id,
+                        actor=actor,
+                        workspace_id=workspace_id,
+                    )
                     scheduled_async_count += 1
                 else:
                     process_document_by_id(document_id, actor=actor)
                     processed_sync_count += 1
 
-                refreshed = get_document(document_id)
+                refreshed = get_document(document_id, workspace_id=workspace_id)
                 if refreshed:
                     imported_items.append(
                         {
@@ -1285,12 +1620,26 @@ def get_connector_config(
     connector_type: str,
     request: Request = None,
 ) -> ConnectorConfigResponse:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM connector_configs WHERE connector_type = ?",
-            (connector_type,),
-        ).fetchone()
+        row = None
+        if workspace_id is not None:
+            row = conn.execute(
+                """
+                SELECT * FROM connector_configs
+                WHERE connector_type = ? AND workspace_id = ?
+                """,
+                (connector_type, workspace_id),
+            ).fetchone()
+        if row is None:
+            row = conn.execute(
+                """
+                SELECT * FROM connector_configs
+                WHERE connector_type = ? AND workspace_id IS NULL
+                """,
+                (connector_type,),
+            ).fetchone()
     config_data = {}
     enabled = True
     last_sync = None
@@ -1317,19 +1666,49 @@ def save_connector_config(
     payload: ConnectorConfigSaveRequest,
     request: Request = None,
 ) -> ConnectorConfigResponse:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     import json as _json
     from .repository import utcnow_iso
 
     now = utcnow_iso()
     config_json = _json.dumps(payload.config)
     with get_connection() as conn:
-        conn.execute(
-            """INSERT INTO connector_configs (connector_type, config_json, enabled, created_at, updated_at)
-               VALUES (?, ?, 1, ?, ?)
-               ON CONFLICT(connector_type) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at""",
-            (connector_type, config_json, now, now),
-        )
+        if workspace_id is not None:
+            conn.execute(
+                """
+                INSERT INTO connector_configs (workspace_id, connector_type, config_json, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, 1, ?, ?)
+                ON CONFLICT(workspace_id, connector_type)
+                DO UPDATE SET config_json = excluded.config_json, enabled = excluded.enabled, updated_at = excluded.updated_at
+                """,
+                (workspace_id, connector_type, config_json, now, now),
+            )
+        else:
+            existing = conn.execute(
+                """
+                SELECT id FROM connector_configs
+                WHERE connector_type = ? AND workspace_id IS NULL
+                """,
+                (connector_type,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE connector_configs
+                    SET config_json = ?, enabled = 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (config_json, now, int(existing["id"])),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO connector_configs (workspace_id, connector_type, config_json, enabled, created_at, updated_at)
+                    VALUES (NULL, ?, ?, 1, ?, ?)
+                    """,
+                    (connector_type, config_json, now, now),
+                )
     return ConnectorConfigResponse(
         connector_type=connector_type,
         config=payload.config,
@@ -1350,20 +1729,38 @@ def import_from_connector_endpoint(
     request: Request = None,
 ) -> ConnectorImportResponse:
     identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
 
     # Plan enforcement: check connector access limits
     user = identity.get("user")
     if user and STRIPE_ENABLED:
-        enforce_plan_limits(user["id"], "use_connector")
+        enforce_plan_limits(
+            user["id"],
+            "use_connector",
+            workspace_id=workspace_id,
+        )
 
     # Use provided config, or fall back to saved config
     config = payload.config
     if not config:
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT config_json FROM connector_configs WHERE connector_type = ?",
-                (connector_type,),
-            ).fetchone()
+            row = None
+            if workspace_id is not None:
+                row = conn.execute(
+                    """
+                    SELECT config_json FROM connector_configs
+                    WHERE connector_type = ? AND workspace_id = ?
+                    """,
+                    (connector_type, workspace_id),
+                ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    """
+                    SELECT config_json FROM connector_configs
+                    WHERE connector_type = ? AND workspace_id IS NULL
+                    """,
+                    (connector_type,),
+                ).fetchone()
         if row:
             import json as _json
 
@@ -1381,6 +1778,7 @@ def import_from_connector_endpoint(
             limit=payload.limit,
             process_async=payload.process_async,
             actor=payload.actor,
+            workspace_id=workspace_id,
         )
     except ConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1406,10 +1804,15 @@ def get_documents(
     assigned_to: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> DocumentListResponse:
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     items: list[DocumentResponse] = []
     for item in list_documents(
-        status=status, department=department, assigned_to=assigned_to, limit=limit
+        status=status,
+        department=department,
+        assigned_to=assigned_to,
+        workspace_id=workspace_id,
+        limit=limit,
     ):
         # Keep list endpoint light; full text is available from document detail endpoint.
         item_payload = dict(item)
@@ -1423,9 +1826,10 @@ def get_overdue_documents(
     request: Request = None,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> DocumentListResponse:
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     items: list[DocumentResponse] = []
-    for item in list_overdue_documents(limit=limit):
+    for item in list_overdue_documents(workspace_id=workspace_id, limit=limit):
         item_payload = dict(item)
         item_payload["extracted_text"] = None
         items.append(DocumentResponse(**item_payload))
@@ -1434,8 +1838,9 @@ def get_overdue_documents(
 
 @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
 def get_document_by_id(document_id: str, request: Request = None) -> DocumentResponse:
-    _enforce(request, role="viewer")
-    record = get_document(document_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    record = get_document(document_id, workspace_id=workspace_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found")
     return DocumentResponse(**record)
@@ -1443,8 +1848,9 @@ def get_document_by_id(document_id: str, request: Request = None) -> DocumentRes
 
 @app.get("/api/documents/{document_id}/download")
 def download_document(document_id: str, request: Request = None):
-    _enforce(request, role="viewer")
-    record = get_document(document_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    record = get_document(document_id, workspace_id=workspace_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found")
     file_path = Path(record.get("storage_path", ""))
@@ -1463,6 +1869,31 @@ def download_document(document_id: str, request: Request = None):
     )
 
 
+@app.get("/api/documents/{document_id}/preview")
+def preview_document(document_id: str, request: Request = None):
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    record = get_document(document_id, workspace_id=workspace_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    file_path = Path(record.get("storage_path", ""))
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    if not file_path.resolve().is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(status_code=403, detail="Access denied")
+    media_type = (
+        record.get("content_type")
+        or mimetypes.guess_type(record["filename"])[0]
+        or "application/octet-stream"
+    )
+    file_bytes = read_document_bytes(file_path)
+    return Response(
+        content=file_bytes,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{record["filename"]}"'},
+    )
+
+
 @app.post("/api/documents/{document_id}/reupload", response_model=DocumentResponse)
 async def reupload_document(
     document_id: str,
@@ -1471,7 +1902,8 @@ async def reupload_document(
     reprocess: bool = Form(True),
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     contents = await file.read()
@@ -1499,18 +1931,20 @@ async def reupload_document(
             "filename": file.filename,
             "content_type": content_type,
         },
+        workspace_id=workspace_id,
     )
     create_audit_event(
         document_id=document_id,
         action="reuploaded",
         actor=str(identity.get("actor", "dashboard_reviewer")),
         details=f"new_file={file.filename}",
+        workspace_id=workspace_id,
     )
     if reprocess:
         process_document_by_id(
             document_id, actor=str(identity.get("actor", "manual_reupload"))
         )
-    refreshed = get_document(document_id)
+    refreshed = get_document(document_id, workspace_id=workspace_id)
     if not refreshed:
         raise HTTPException(status_code=500, detail="Unable to reload document")
     return DocumentResponse(**refreshed)
@@ -1521,7 +1955,8 @@ def review_document(
     document_id: str, payload: ReviewRequest, request: Request = None
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     if payload.approve and STRICT_APPROVAL_ROLE:
@@ -1561,7 +1996,7 @@ def review_document(
             else "approved"
         )
 
-    updated = update_document(document_id, updates=updates)
+    updated = update_document(document_id, updates=updates, workspace_id=workspace_id)
     if not updated:
         raise HTTPException(status_code=500, detail="Unable to update document")
 
@@ -1573,6 +2008,7 @@ def review_document(
             f"approve={payload.approve} corrected_doc_type={payload.corrected_doc_type} "
             f"allowed_types={','.join(sorted(get_active_rules()[0].keys()))}"
         ),
+        workspace_id=workspace_id,
     )
     _export_approved_snapshot(
         updated,
@@ -1580,20 +2016,30 @@ def review_document(
         trigger="review",
     )
 
+    # Send review complete email if document was approved/corrected
+    if payload.approve:
+        try:
+            from .auto_emails import send_review_complete_notification
+
+            send_review_complete_notification(document_id)
+        except Exception:
+            logger.debug("Review complete email failed (non-blocking)", exc_info=True)
+
     return DocumentResponse(**updated)
 
 
 @app.post("/api/documents/{document_id}/reprocess", response_model=DocumentResponse)
 def reprocess_document(document_id: str, request: Request = None) -> DocumentResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
     process_document_by_id(
         document_id, actor=str(identity.get("actor", "manual_reprocess"))
     )
-    updated = get_document(document_id)
+    updated = get_document(document_id, workspace_id=workspace_id)
     if not updated:
         raise HTTPException(status_code=500, detail="Unable to reload document")
 
@@ -1606,12 +2052,15 @@ def get_document_audit(
     request: Request = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> AuditTrailResponse:
-    _enforce(request, role="viewer")
-    document = get_document(document_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    return AuditTrailResponse(items=list_audit_events(document_id, limit=limit))
+    return AuditTrailResponse(
+        items=list_audit_events(document_id, workspace_id=workspace_id, limit=limit)
+    )
 
 
 @app.get("/api/config/rules", response_model=RulesConfigResponse)
@@ -1649,15 +2098,17 @@ def reset_rules_config(request: Request = None) -> RulesConfigResponse:
 
 @app.get("/api/queues", response_model=QueueResponse)
 def get_queues(request: Request = None) -> QueueResponse:
-    _enforce(request, role="viewer")
-    queues = get_queue_snapshot()
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    queues = get_queue_snapshot(workspace_id=workspace_id)
     return QueueResponse(queues=queues)
 
 
 @app.get("/api/analytics", response_model=AnalyticsResponse)
 def get_analytics(request: Request = None) -> AnalyticsResponse:
-    _enforce(request, role="viewer")
-    snapshot = get_analytics_snapshot()
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    snapshot = get_analytics_snapshot(workspace_id=workspace_id)
     return AnalyticsResponse(**snapshot)
 
 
@@ -1692,7 +2143,14 @@ def get_recent_activity(
     request: Request = None, limit: int = Query(default=15, ge=1, le=50)
 ) -> dict:
     """Return recent audit events across all documents for the activity feed."""
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    where_sql = ""
+    params: list[object] = []
+    if workspace_id is not None:
+        where_sql = "WHERE a.workspace_id = ?"
+        params.append(workspace_id)
+    params.append(limit)
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -1700,10 +2158,13 @@ def get_recent_activity(
                    d.filename
             FROM audit_events a
             LEFT JOIN documents d ON d.id = a.document_id
+            """
+            + where_sql
+            + """
             ORDER BY a.id DESC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
     return {"items": [dict(r) for r in rows]}
 
@@ -1775,13 +2236,30 @@ def create_platform_invitation(
     payload: InvitationCreateRequest, request: Request
 ) -> InvitationCreateResponse:
     identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     invitation, raw_token = create_invitation(
+        workspace_id=workspace_id,
         email=payload.email.strip().lower(),
         role=payload.role.strip().lower(),
         actor=str(identity.get("actor", payload.actor or "dashboard_admin")),
         expires_in_days=payload.expires_in_days,
     )
     invite_link = f"{str(request.base_url).rstrip('/')}/invite/{raw_token}"
+
+    # Send invitation email (fire-and-forget)
+    try:
+        from .account_emails import send_invitation_email
+
+        inviter = str(identity.get("actor", "An administrator"))
+        send_invitation_email(
+            payload.email.strip().lower(),
+            invite_link,
+            inviter,
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        logger.debug("Invitation email failed (non-blocking)", exc_info=True)
+
     return InvitationCreateResponse(
         invitation=invitation,
         invite_token=raw_token,
@@ -1795,8 +2273,16 @@ def get_platform_invitations(
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> InvitationListResponse:
-    _enforce(request, role="viewer")
-    items = [item for item in list_invitations(status=status, limit=limit)]
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    items = [
+        item
+        for item in list_invitations(
+            workspace_id=workspace_id,
+            status=status,
+            limit=limit,
+        )
+    ]
     return InvitationListResponse(items=items)
 
 
@@ -1840,10 +2326,14 @@ def revoke_platform_api_key(key_id: int, request: Request = None) -> ApiKeyRecor
 
 @app.get("/api/platform/summary", response_model=PlatformSummaryResponse)
 def get_platform_summary(request: Request = None) -> PlatformSummaryResponse:
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     connectivity = _connectivity_snapshot()
     active_api_keys = count_api_keys(status="active")
-    pending_invitations = count_invitations(status="pending")
+    pending_invitations = count_invitations(
+        workspace_id=workspace_id,
+        status="pending",
+    )
     latest_deployment_raw = get_latest_deployment()
     latest_deployment = (
         DeploymentRecord(**latest_deployment_raw) if latest_deployment_raw else None
@@ -1857,21 +2347,240 @@ def get_platform_summary(request: Request = None) -> PlatformSummaryResponse:
     )
 
 
+@app.get("/api/admin/billing-stats")
+def get_admin_billing_stats(request: Request = None) -> dict:
+    _enforce(request, role="admin", allow_api_key=False)
+    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    monthly_price_map = {"pro": 2900, "enterprise": 9900}
+
+    with get_connection() as connection:
+        active_row = connection.execute(
+            "SELECT COUNT(*) AS total FROM subscriptions WHERE status = 'active'"
+        ).fetchone()
+        monthly_rows = connection.execute(
+            """
+            SELECT plan_tier, COUNT(*) AS total
+            FROM subscriptions
+            WHERE status = 'active' AND billing_type = 'monthly'
+            GROUP BY plan_tier
+            """
+        ).fetchall()
+        revenue_row = connection.execute(
+            """
+            SELECT COALESCE(SUM(amount_cents), 0) AS total
+            FROM payment_events
+            WHERE created_at >= ?
+              AND event_type IN ('checkout.session.completed', 'invoice.paid')
+            """,
+            (cutoff_30d,),
+        ).fetchone()
+        plan_rows = connection.execute(
+            """
+            SELECT plan_tier, COUNT(*) AS total
+            FROM users
+            GROUP BY plan_tier
+            ORDER BY total DESC, plan_tier ASC
+            """
+        ).fetchall()
+        payment_rows = connection.execute(
+            """
+            SELECT p.id, p.user_id, p.event_type, p.amount_cents, p.currency, p.plan_tier,
+                   p.billing_type, p.created_at, u.email AS user_email
+            FROM payment_events p
+            LEFT JOIN users u ON u.id = p.user_id
+            ORDER BY p.id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+
+    mrr_cents = 0
+    for row in monthly_rows:
+        plan_tier = str(row["plan_tier"] or "").strip().lower()
+        mrr_cents += int(row["total"] or 0) * int(monthly_price_map.get(plan_tier, 0))
+
+    plan_distribution = {
+        str(row["plan_tier"] or "free"): int(row["total"] or 0) for row in plan_rows
+    }
+    recent_payments = [dict(row) for row in payment_rows]
+
+    return {
+        "active_subscriptions": int(active_row["total"] or 0) if active_row else 0,
+        "mrr_cents": int(mrr_cents),
+        "revenue_last_30_days_cents": int(revenue_row["total"] or 0)
+        if revenue_row
+        else 0,
+        "plan_distribution": plan_distribution,
+        "recent_payments": recent_payments,
+    }
+
+
+@app.get("/api/admin/system-health")
+def get_admin_system_health(request: Request = None) -> dict:
+    _enforce(request, role="admin", allow_api_key=False)
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+    with get_connection() as connection:
+        job_rows = connection.execute(
+            """
+            SELECT status, COUNT(*) AS total
+            FROM jobs
+            GROUP BY status
+            """
+        ).fetchall()
+        documents_row = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status IN ('routed', 'approved', 'corrected', 'completed', 'archived')
+                          AND requires_review = 0 THEN 1 ELSE 0 END) AS auto_routed,
+                SUM(CASE WHEN requires_review = 1 OR status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+            FROM documents
+            WHERE created_at >= ?
+            """,
+            (cutoff_24h,),
+        ).fetchone()
+        audit_errors_row = connection.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM audit_events
+            WHERE created_at >= ?
+              AND LOWER(action) LIKE '%failed%'
+            """,
+            (cutoff_24h,),
+        ).fetchone()
+        email_rows = connection.execute(
+            """
+            SELECT status, COUNT(*) AS total
+            FROM outbound_emails
+            WHERE created_at >= ?
+            GROUP BY status
+            """,
+            (cutoff_24h,),
+        ).fetchall()
+
+    job_queue = {"queued": 0, "running": 0, "failed": 0}
+    for row in job_rows:
+        status = str(row["status"] or "").strip().lower()
+        count = int(row["total"] or 0)
+        if status in {"queued"}:
+            job_queue["queued"] += count
+        elif status in {"running", "in_progress"}:
+            job_queue["running"] += count
+        elif status in {"failed"}:
+            job_queue["failed"] += count
+
+    email_counts = {"sent": 0, "failed": 0}
+    for row in email_rows:
+        status = str(row["status"] or "").strip().lower()
+        if status in email_counts:
+            email_counts[status] += int(row["total"] or 0)
+
+    db_status = "ok"
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+    except Exception:
+        db_status = "error"
+
+    storage_ok = bool(UPLOAD_DIR.exists() and os.access(UPLOAD_DIR, os.W_OK))
+
+    return {
+        "job_queue": job_queue,
+        "documents_last_24h": {
+            "total": int(documents_row["total"] or 0) if documents_row else 0,
+            "auto_routed": int(documents_row["auto_routed"] or 0)
+            if documents_row
+            else 0,
+            "needs_review": int(documents_row["needs_review"] or 0)
+            if documents_row
+            else 0,
+            "failed": int(documents_row["failed"] or 0) if documents_row else 0,
+        },
+        "errors_last_24h": int(audit_errors_row["total"] or 0)
+        if audit_errors_row
+        else 0,
+        "emails_last_24h": email_counts,
+        "connectivity": {
+            "database": {"status": db_status},
+            "storage": {
+                "status": "ok" if storage_ok else "error",
+                "path": str(UPLOAD_DIR),
+            },
+        },
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/admin/audit-log")
+def get_admin_audit_log(
+    request: Request = None,
+    action: Optional[str] = Query(default=None),
+    actor: Optional[str] = Query(default=None),
+    document_id: Optional[str] = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict:
+    _enforce(request, role="admin", allow_api_key=False)
+
+    where: list[str] = []
+    params: list[object] = []
+    if action:
+        where.append("a.action = ?")
+        params.append(action)
+    if actor:
+        where.append("a.actor = ?")
+        params.append(actor)
+    if document_id:
+        where.append("a.document_id = ?")
+        params.append(document_id)
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+    with get_connection() as connection:
+        total_row = connection.execute(
+            f"SELECT COUNT(*) AS total FROM audit_events a {where_sql}",
+            tuple(params),
+        ).fetchone()
+        rows = connection.execute(
+            f"""
+            SELECT a.id, a.document_id, a.action, a.actor, a.details, a.created_at, d.filename
+            FROM audit_events a
+            LEFT JOIN documents d ON d.id = a.document_id
+            {where_sql}
+            ORDER BY a.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple([*params, limit, offset]),
+        ).fetchall()
+
+    return {
+        "items": [dict(row) for row in rows],
+        "total": int(total_row["total"] or 0) if total_row else 0,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
 @app.get("/api/jobs", response_model=JobListResponse)
 def list_worker_jobs(
     request: Request = None,
     status: Optional[str] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> JobListResponse:
-    _enforce(request, role="viewer")
-    items = [JobRecord(**item) for item in get_jobs(status=status, limit=limit)]
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    items = [
+        JobRecord(**item)
+        for item in get_jobs(status=status, workspace_id=workspace_id, limit=limit)
+    ]
     return JobListResponse(items=items)
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobRecord)
 def get_worker_job(job_id: str, request: Request = None) -> JobRecord:
-    _enforce(request, role="viewer")
-    record = get_job_by_id(job_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    record = get_job_by_id(job_id, workspace_id=workspace_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job not found.")
     return JobRecord(**record)
@@ -1887,7 +2596,8 @@ def transition_document(
     document_id: str, payload: TransitionRequest, request: Request = None
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -1903,17 +2613,19 @@ def transition_document(
     if payload.notes:
         updates["reviewer_notes"] = payload.notes
 
-    updated = update_document(document_id, updates=updates)
+    updated = update_document(document_id, updates=updates, workspace_id=workspace_id)
     create_audit_event(
         document_id=document_id,
         action="status_transition",
         actor=str(identity.get("actor", payload.actor)),
         details=f"from={current} to={payload.status}",
+        workspace_id=workspace_id,
     )
     create_notification(
         type="status_change",
         title=f"{document['filename']}: {current} → {payload.status}",
         document_id=document_id,
+        workspace_id=workspace_id,
     )
     _export_approved_snapshot(
         updated,
@@ -1942,7 +2654,8 @@ def assign_document(
     document_id: str, payload: AssignRequest, request: Request = None
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -1950,12 +2663,13 @@ def assign_document(
     if document["status"] in ("needs_review", "acknowledged"):
         updates["status"] = "assigned"
 
-    updated = update_document(document_id, updates=updates)
+    updated = update_document(document_id, updates=updates, workspace_id=workspace_id)
     create_audit_event(
         document_id=document_id,
         action="assigned",
         actor=str(identity.get("actor", payload.actor)),
         details=f"assigned_to={payload.user_id}",
+        workspace_id=workspace_id,
     )
     create_notification(
         type="assignment",
@@ -1963,7 +2677,17 @@ def assign_document(
         message=f"Type: {document.get('doc_type', '-')}",
         user_id=payload.user_id,
         document_id=document_id,
+        workspace_id=workspace_id,
     )
+
+    # Send assignment email (fire-and-forget)
+    try:
+        from .auto_emails import send_assignment_notification
+
+        send_assignment_notification(document_id, payload.user_id)
+    except Exception:
+        logger.debug("Assignment email failed (non-blocking)", exc_info=True)
+
     return DocumentResponse(**updated)
 
 
@@ -1978,6 +2702,7 @@ def auto_assign_manual_documents(
     request: Request = None,
 ) -> AutomationAutoAssignResponse:
     identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     user = identity.get("user")
     requested_user = _coerce_optional_text(payload.user_id)
     identity_user_id = user.get("id") if isinstance(user, dict) else None
@@ -1988,14 +2713,21 @@ def auto_assign_manual_documents(
 
     assigned_count = 0
     processed_document_ids: list[str] = []
-    for document in list_unassigned_manual_documents(limit=payload.limit):
+    for document in list_unassigned_manual_documents(
+        workspace_id=workspace_id,
+        limit=payload.limit,
+    ):
         document_id = str(document.get("id", "")).strip()
         if not document_id:
             continue
         updates: dict[str, object] = {"assigned_to": assignee}
         if document.get("status") in ("needs_review", "acknowledged"):
             updates["status"] = "assigned"
-        updated = update_document(document_id, updates=updates)
+        updated = update_document(
+            document_id,
+            updates=updates,
+            workspace_id=workspace_id,
+        )
         if not updated:
             continue
         assigned_count += 1
@@ -2005,6 +2737,7 @@ def auto_assign_manual_documents(
             action="auto_assigned",
             actor=actor,
             details=f"assigned_to={assignee}",
+            workspace_id=workspace_id,
         )
         create_notification(
             type="assignment",
@@ -2012,9 +2745,20 @@ def auto_assign_manual_documents(
             message="Auto-assigned by Automation Assistant.",
             user_id=assignee,
             document_id=document_id,
+            workspace_id=workspace_id,
         )
+        try:
+            from .auto_emails import send_assignment_notification
 
-    remaining_unassigned = count_unassigned_manual_documents()
+            send_assignment_notification(document_id, assignee)
+        except Exception:
+            logger.debug(
+                "Auto-assignment email failed for doc %s (non-blocking)",
+                document_id,
+                exc_info=True,
+            )
+
+    remaining_unassigned = count_unassigned_manual_documents(workspace_id=workspace_id)
     return AutomationAutoAssignResponse(
         assignee=assignee,
         assigned_count=assigned_count,
@@ -2032,11 +2776,16 @@ def run_anthropic_automation_sweep(
     request: Request = None,
 ) -> AutomationAnthropicSweepResponse:
     identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
 
     # Plan enforcement: check AI classifier access
     user = identity.get("user")
     if user and STRIPE_ENABLED:
-        enforce_plan_limits(user["id"], "use_ai_classifier")
+        enforce_plan_limits(
+            user["id"],
+            "use_ai_classifier",
+            workspace_id=workspace_id,
+        )
 
     if not ANTHROPIC_API_KEY:
         raise HTTPException(
@@ -2052,7 +2801,9 @@ def run_anthropic_automation_sweep(
         remaining = max(payload.limit - len(candidates), 0)
         if remaining <= 0:
             break
-        candidates.extend(list_documents(status=status, limit=remaining))
+        candidates.extend(
+            list_documents(status=status, workspace_id=workspace_id, limit=remaining)
+        )
 
     seen_ids: set[str] = set()
     unique_ids: list[str] = []
@@ -2073,7 +2824,7 @@ def run_anthropic_automation_sweep(
             actor=payload.actor,
             force_anthropic_classification=True,
         )
-        refreshed = get_document(doc_id)
+        refreshed = get_document(doc_id, workspace_id=workspace_id)
         processed_count += 1
         processed_document_ids.append(doc_id)
         status = str((refreshed or {}).get("status", "")).strip().lower()
@@ -2102,10 +2853,16 @@ def get_notifications(
     limit: int = Query(default=50, ge=1, le=200),
 ) -> NotificationListResponse:
     identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     user = identity.get("user")
     user_id = user.get("id") if isinstance(user, dict) else None
-    items = list_notifications(user_id=user_id, unread_only=unread_only, limit=limit)
-    unread = count_unread(user_id=user_id)
+    items = list_notifications(
+        user_id=user_id,
+        workspace_id=workspace_id,
+        unread_only=unread_only,
+        limit=limit,
+    )
+    unread = count_unread(user_id=user_id, workspace_id=workspace_id)
     return NotificationListResponse(
         items=[NotificationRecord(**n) for n in items],
         unread_count=unread,
@@ -2115,9 +2872,10 @@ def get_notifications(
 @app.post("/api/notifications/{notification_id}/read")
 def read_notification(notification_id: int, request: Request = None):
     identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     user = identity.get("user")
     user_id = user.get("id") if isinstance(user, dict) else None
-    result = mark_read(notification_id, user_id=user_id)
+    result = mark_read(notification_id, user_id=user_id, workspace_id=workspace_id)
     if not result:
         raise HTTPException(status_code=404, detail="Notification not found")
     return NotificationRecord(**result)
@@ -2126,9 +2884,10 @@ def read_notification(notification_id: int, request: Request = None):
 @app.post("/api/notifications/read-all")
 def read_all_notifications(request: Request = None):
     identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     user = identity.get("user")
     user_id = user.get("id") if isinstance(user, dict) else None
-    count = mark_all_read(user_id=user_id)
+    count = mark_all_read(user_id=user_id, workspace_id=workspace_id)
     return {"marked_read": count}
 
 
@@ -2164,9 +2923,15 @@ def get_templates(
     doc_type: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> TemplateListResponse:
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     items = [
-        TemplateRecord(**t) for t in list_templates(doc_type=doc_type, limit=limit)
+        TemplateRecord(**t)
+        for t in list_templates(
+            workspace_id=workspace_id,
+            doc_type=doc_type,
+            limit=limit,
+        )
     ]
     return TemplateListResponse(items=items)
 
@@ -2175,8 +2940,10 @@ def get_templates(
 def create_new_template(
     payload: TemplateCreateRequest, request: Request = None
 ) -> TemplateRecord:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     record = create_template_record(
+        workspace_id=workspace_id,
         name=payload.name,
         doc_type=payload.doc_type,
         template_body=payload.template_body,
@@ -2186,8 +2953,9 @@ def create_new_template(
 
 @app.get("/api/templates/{template_id}", response_model=TemplateRecord)
 def get_template_by_id(template_id: int, request: Request = None) -> TemplateRecord:
-    _enforce(request, role="viewer")
-    record = get_template(template_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    record = get_template(template_id, workspace_id=workspace_id)
     if not record:
         raise HTTPException(status_code=404, detail="Template not found")
     return TemplateRecord(**record)
@@ -2197,12 +2965,14 @@ def get_template_by_id(template_id: int, request: Request = None) -> TemplateRec
 def update_template_by_id(
     template_id: int, payload: TemplateUpdateRequest, request: Request = None
 ) -> TemplateRecord:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     record = update_template(
         template_id,
         name=payload.name,
         doc_type=payload.doc_type,
         template_body=payload.template_body,
+        workspace_id=workspace_id,
     )
     if not record:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -2211,8 +2981,9 @@ def update_template_by_id(
 
 @app.delete("/api/templates/{template_id}")
 def delete_template_by_id(template_id: int, request: Request = None):
-    _enforce(request, role="operator")
-    if not delete_template(template_id):
+    identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
+    if not delete_template(template_id, workspace_id=workspace_id):
         raise HTTPException(status_code=404, detail="Template not found")
     return {"deleted": True}
 
@@ -2224,12 +2995,17 @@ def delete_template_by_id(template_id: int, request: Request = None):
 def render_template_for_document(
     template_id: int, document_id: str, request: Request = None
 ) -> TemplateRenderResponse:
-    _enforce(request, role="viewer")
-    template_record = get_template(template_id)
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
+    template_record = get_template(template_id, workspace_id=workspace_id)
     if not template_record:
         raise HTTPException(status_code=404, detail="Template not found")
     try:
-        rendered = render_template(template_id, document_id)
+        rendered = render_template(
+            template_id,
+            document_id,
+            workspace_id=workspace_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return TemplateRenderResponse(
@@ -2248,9 +3024,14 @@ def compose_template_for_document(
     document_id: str,
     request: Request = None,
 ) -> TemplateComposeResponse:
-    _enforce(request, role="viewer")
+    identity = _enforce(request, role="viewer")
+    workspace_id = _resolve_workspace_id(identity)
     try:
-        composed = compose_template_email(template_id, document_id)
+        composed = compose_template_email(
+            template_id,
+            document_id,
+            workspace_id=workspace_id,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return TemplateComposeResponse(**composed)
@@ -2266,7 +3047,8 @@ def send_document_response(
     request: Request = None,
 ) -> ResponseEmailSendResponse:
     identity = _enforce(request, role="operator")
-    document = get_document(document_id)
+    workspace_id = _resolve_workspace_id(identity)
+    document = get_document(document_id, workspace_id=workspace_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -2285,6 +3067,7 @@ def send_document_response(
     actor = str(identity.get("actor", payload.actor))
     email_record = create_outbound_email(
         document_id=document_id,
+        workspace_id=workspace_id,
         to_email=to_email,
         subject=subject,
         body=body,
@@ -2302,6 +3085,7 @@ def send_document_response(
             action="response_email_failed",
             actor=actor,
             details=f"to={to_email} reason=email_not_configured",
+            workspace_id=workspace_id,
         )
         raise HTTPException(
             status_code=503,
@@ -2321,12 +3105,14 @@ def send_document_response(
             action="response_email_sent",
             actor=actor,
             details=f"to={to_email} subject={subject}",
+            workspace_id=workspace_id,
         )
         create_notification(
             type="response_sent",
             title=f"Response email sent: {document.get('filename', 'document')}",
             message=f"Sent to {to_email}",
             document_id=document_id,
+            workspace_id=workspace_id,
         )
         return ResponseEmailSendResponse(**(updated or email_record))
     except Exception as exc:
@@ -2340,6 +3126,7 @@ def send_document_response(
             action="response_email_failed",
             actor=actor,
             details=f"to={to_email} error={exc}",
+            workspace_id=workspace_id,
         )
         return ResponseEmailSendResponse(**(failed or email_record))
 
@@ -2354,13 +3141,14 @@ def bulk_document_action(
     payload: BulkActionRequest, request: Request = None
 ) -> BulkActionResponse:
     identity = _enforce(request, role="operator")
+    workspace_id = _resolve_workspace_id(identity)
     actor = str(identity.get("actor", payload.actor))
     success_count = 0
     errors: list[str] = []
 
     for doc_id in payload.document_ids:
         try:
-            doc = get_document(doc_id)
+            doc = get_document(doc_id, workspace_id=workspace_id)
             if not doc:
                 errors.append(f"{doc_id}: not found")
                 continue
@@ -2374,11 +3162,13 @@ def bulk_document_action(
                         "missing_fields": [],
                         "validation_errors": [],
                     },
+                    workspace_id=workspace_id,
                 )
                 create_audit_event(
                     document_id=doc_id,
                     action="bulk_approved",
                     actor=actor,
+                    workspace_id=workspace_id,
                 )
                 if updated_doc:
                     _export_approved_snapshot(
@@ -2393,12 +3183,13 @@ def bulk_document_action(
                 updates_map: dict[str, object] = {"assigned_to": user_id}
                 if doc["status"] in ("needs_review", "acknowledged"):
                     updates_map["status"] = "assigned"
-                update_document(doc_id, updates=updates_map)
+                update_document(doc_id, updates=updates_map, workspace_id=workspace_id)
                 create_audit_event(
                     document_id=doc_id,
                     action="bulk_assigned",
                     actor=actor,
                     details=f"assigned_to={user_id}",
+                    workspace_id=workspace_id,
                 )
 
             elif payload.action == "transition":
@@ -2412,12 +3203,17 @@ def bulk_document_action(
                         f"{doc_id}: invalid transition {doc['status']} → {target_status}"
                     )
                     continue
-                updated_doc = update_document(doc_id, updates={"status": target_status})
+                updated_doc = update_document(
+                    doc_id,
+                    updates={"status": target_status},
+                    workspace_id=workspace_id,
+                )
                 create_audit_event(
                     document_id=doc_id,
                     action="bulk_transition",
                     actor=actor,
                     details=f"to={target_status}",
+                    workspace_id=workspace_id,
                 )
                 if updated_doc:
                     _export_approved_snapshot(

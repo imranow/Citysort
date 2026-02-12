@@ -20,13 +20,18 @@ from .config import (
     STRIPE_WEBHOOK_SECRET,
 )
 from .repository import (
+    count_workspace_documents_this_month,
     count_user_documents_this_month,
     create_payment_event,
     create_subscription,
+    get_default_workspace_for_user,
     get_user_by_id,
     get_user_by_stripe_customer,
+    get_workspace,
+    get_workspace_by_stripe_customer,
     update_subscription_status,
     update_user_plan,
+    update_workspace_plan,
 )
 
 logger = logging.getLogger("citysort.billing")
@@ -63,6 +68,7 @@ def create_checkout_session(
     *,
     user_id: str,
     user_email: str,
+    workspace_id: str | None = None,
     plan_tier: str,
     billing_type: str,
     success_url: str,
@@ -90,6 +96,8 @@ def create_checkout_session(
         "plan_tier": plan_tier,
         "billing_type": billing_type,
     }
+    if workspace_id:
+        metadata["workspace_id"] = workspace_id
 
     session_kwargs: dict[str, Any] = {
         "customer_email": user_email,
@@ -168,9 +176,27 @@ def handle_webhook_event(payload: bytes, sig_header: str) -> dict[str, Any]:
     return {"received": True, "type": event_type}
 
 
+def _resolve_workspace_id(
+    user_id: str | None, preferred_workspace_id: str | None = None
+) -> str | None:
+    if preferred_workspace_id:
+        return str(preferred_workspace_id)
+    if not user_id:
+        return None
+    workspace = get_default_workspace_for_user(str(user_id))
+    if not workspace:
+        return None
+    workspace_id = workspace.get("id")
+    return str(workspace_id) if workspace_id else None
+
+
 def _handle_checkout_completed(event_id: str, session: dict[str, Any]) -> None:
     metadata = session.get("metadata", {})
     user_id = metadata.get("user_id")
+    workspace_id = _resolve_workspace_id(
+        user_id,
+        metadata.get("workspace_id"),
+    )
     plan_tier = metadata.get("plan_tier", "pro")
     billing_type = metadata.get("billing_type", "monthly")
     customer_id = session.get("customer")
@@ -181,12 +207,21 @@ def _handle_checkout_completed(event_id: str, session: dict[str, Any]) -> None:
         logger.warning("checkout.session.completed without user_id in metadata")
         return
 
-    # Update user plan
-    update_user_plan(user_id, plan_tier=plan_tier, stripe_customer_id=customer_id)
+    # Workspace-scoped billing: workspace plan is the source of truth.
+    if workspace_id:
+        update_workspace_plan(
+            workspace_id,
+            plan_tier=plan_tier,
+            stripe_customer_id=customer_id,
+        )
+    else:
+        # Backward compatibility for legacy single-workspace data.
+        update_user_plan(user_id, plan_tier=plan_tier, stripe_customer_id=customer_id)
 
     # Create subscription record
     create_subscription(
         user_id=user_id,
+        workspace_id=workspace_id,
         plan_tier=plan_tier,
         billing_type=billing_type,
         stripe_subscription_id=subscription_id,
@@ -198,6 +233,7 @@ def _handle_checkout_completed(event_id: str, session: dict[str, Any]) -> None:
     try:
         create_payment_event(
             user_id=user_id,
+            workspace_id=workspace_id,
             stripe_event_id=event_id,
             event_type="checkout.session.completed",
             amount_cents=amount,
@@ -208,18 +244,38 @@ def _handle_checkout_completed(event_id: str, session: dict[str, Any]) -> None:
     except Exception:
         logger.warning("Duplicate payment event: %s (idempotent)", event_id)
 
+    # Send plan upgrade email (fire-and-forget)
+    try:
+        from .account_emails import send_plan_upgrade_email
+
+        user = get_user_by_id(user_id)
+        if user:
+            send_plan_upgrade_email(
+                user["email"],
+                plan_tier,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+    except Exception:
+        logger.debug("Plan upgrade email failed (non-blocking)", exc_info=True)
+
 
 def _handle_invoice_paid(event_id: str, invoice: dict[str, Any]) -> None:
     customer_id = invoice.get("customer")
     subscription_id = invoice.get("subscription")
     amount = invoice.get("amount_paid", 0)
 
+    workspace = (
+        get_workspace_by_stripe_customer(str(customer_id)) if customer_id else None
+    )
+    workspace_id = str(workspace["id"]) if workspace else None
     user = get_user_by_stripe_customer(customer_id) if customer_id else None
     user_id = user["id"] if user else None
 
     try:
         create_payment_event(
             user_id=user_id,
+            workspace_id=workspace_id,
             stripe_event_id=event_id,
             event_type="invoice.paid",
             amount_cents=amount,
@@ -246,17 +302,39 @@ def _handle_invoice_paid(event_id: str, invoice: dict[str, Any]) -> None:
             current_period_end=period_end_iso,
         )
 
+    # Send payment receipt email (fire-and-forget).
+    if user:
+        try:
+            from .account_emails import send_payment_receipt_email
+
+            send_payment_receipt_email(
+                user["email"],
+                amount_cents=int(amount or 0),
+                plan_tier=str(
+                    (workspace or {}).get("plan_tier") or user.get("plan_tier", "pro")
+                ),
+                user_id=user["id"],
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            logger.debug("Payment receipt email failed (non-blocking)", exc_info=True)
+
 
 def _handle_invoice_failed(event_id: str, invoice: dict[str, Any]) -> None:
     customer_id = invoice.get("customer")
     subscription_id = invoice.get("subscription")
 
+    workspace = (
+        get_workspace_by_stripe_customer(str(customer_id)) if customer_id else None
+    )
+    workspace_id = str(workspace["id"]) if workspace else None
     user = get_user_by_stripe_customer(customer_id) if customer_id else None
     user_id = user["id"] if user else None
 
     try:
         create_payment_event(
             user_id=user_id,
+            workspace_id=workspace_id,
             stripe_event_id=event_id,
             event_type="invoice.payment_failed",
             raw_payload=json.dumps(invoice),
@@ -281,6 +359,10 @@ def _handle_subscription_change(
     customer_id = subscription.get("customer")
     status = subscription.get("status", "active")
 
+    workspace = (
+        get_workspace_by_stripe_customer(str(customer_id)) if customer_id else None
+    )
+    workspace_id = str(workspace["id"]) if workspace else None
     user = get_user_by_stripe_customer(customer_id) if customer_id else None
     user_id = user["id"] if user else None
 
@@ -302,8 +384,11 @@ def _handle_subscription_change(
         canceled_at = datetime.now(timezone.utc).isoformat()
         mapped_status = "canceled"
 
-        # Revert user to free tier
-        if user_id:
+        # Revert workspace to free tier when subscription is canceled.
+        if workspace_id:
+            update_workspace_plan(workspace_id, plan_tier="free")
+        elif user_id:
+            # Backward compatibility for legacy single-workspace data.
             update_user_plan(user_id, plan_tier="free")
 
     if subscription_id:
@@ -316,6 +401,7 @@ def _handle_subscription_change(
     try:
         create_payment_event(
             user_id=user_id,
+            workspace_id=workspace_id,
             stripe_event_id=event_id,
             event_type=event_type,
             raw_payload=json.dumps(subscription),
@@ -324,23 +410,29 @@ def _handle_subscription_change(
         logger.warning("Duplicate payment event: %s", event_id)
 
 
-def enforce_plan_limits(user_id: str, action: str) -> None:
-    """Raise HTTPException(403) if the user's plan doesn't allow this action."""
+def enforce_plan_limits(
+    user_id: str, action: str, workspace_id: str | None = None
+) -> None:
+    """Raise HTTPException(403) if the active workspace plan blocks the action."""
     user = get_user_by_id(user_id)
     if not user:
         return  # No user = no enforcement (auth handles this)
-    plan = user.get("plan_tier", "free")
+    resolved_workspace_id = _resolve_workspace_id(user_id, workspace_id)
+    workspace = get_workspace(resolved_workspace_id) if resolved_workspace_id else None
+    plan = str((workspace or {}).get("plan_tier") or user.get("plan_tier", "free"))
 
     if action == "upload_document":
+        if resolved_workspace_id:
+            count = count_workspace_documents_this_month(resolved_workspace_id)
+        else:
+            count = count_user_documents_this_month(user_id)
         if plan == "free":
-            count = count_user_documents_this_month()
             if count >= PLAN_FREE_DOCUMENT_LIMIT:
                 raise HTTPException(
                     status_code=403,
                     detail=f"Free plan limit of {PLAN_FREE_DOCUMENT_LIMIT} documents/month reached. Upgrade to Pro.",
                 )
         elif plan == "pro":
-            count = count_user_documents_this_month()
             if count >= PLAN_PRO_DOCUMENT_LIMIT:
                 raise HTTPException(
                     status_code=403,

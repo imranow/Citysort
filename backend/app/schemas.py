@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class DocumentResponse(BaseModel):
     id: str
+    workspace_id: Optional[str] = None
     filename: str
     source_channel: str
     content_type: Optional[str] = None
@@ -76,6 +77,7 @@ class ReviewRequest(BaseModel):
 
 class AuditEvent(BaseModel):
     id: int
+    workspace_id: Optional[str] = None
     document_id: str
     action: str
     actor: str
@@ -265,6 +267,7 @@ class AuthLoginRequest(BaseModel):
 
 class UserRecord(BaseModel):
     id: str
+    workspace_id: Optional[str] = None
     email: str
     full_name: Optional[str] = None
     role: str
@@ -296,8 +299,64 @@ class UserListResponse(BaseModel):
     items: list[UserRecord] = Field(default_factory=list)
 
 
+# --- Workspaces ---
+
+
+class WorkspaceRecord(BaseModel):
+    id: str
+    name: str
+    slug: str
+    owner_id: str
+    plan_tier: str = "free"
+    stripe_customer_id: Optional[str] = None
+    settings: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    member_role: Optional[str] = None
+
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str
+
+
+class WorkspaceUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    settings: Optional[dict[str, Any]] = None
+
+
+class WorkspaceListResponse(BaseModel):
+    items: list[WorkspaceRecord] = Field(default_factory=list)
+
+
+class WorkspaceMemberRecord(BaseModel):
+    id: int
+    workspace_id: str
+    user_id: str
+    role: str
+    joined_at: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    status: Optional[str] = None
+
+
+class WorkspaceMemberInviteRequest(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    role: str
+
+
+class WorkspaceSwitchResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    workspace: WorkspaceRecord
+
+
 class JobRecord(BaseModel):
     id: str
+    workspace_id: Optional[str] = None
     job_type: str
     status: str
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -321,6 +380,7 @@ class JobListResponse(BaseModel):
 
 class NotificationRecord(BaseModel):
     id: int
+    workspace_id: Optional[str] = None
     user_id: Optional[str] = None
     type: str
     title: str
@@ -358,6 +418,7 @@ class AssignRequest(BaseModel):
 
 class TemplateRecord(BaseModel):
     id: int
+    workspace_id: Optional[str] = None
     name: str
     doc_type: Optional[str] = None
     template_body: str
@@ -551,3 +612,26 @@ class PlanInfo(BaseModel):
 
 class PlansResponse(BaseModel):
     plans: list[PlanInfo] = Field(default_factory=list)
+
+
+# ── Email Preferences ────────────────────────────────────────────────
+
+
+class EmailPreferencesResponse(BaseModel):
+    account_welcome: bool = True
+    account_plan_change: bool = True
+    account_payment_receipt: bool = True
+    account_invitation: bool = True
+    doc_assigned: bool = True
+    doc_review_complete: bool = True
+    doc_digest: bool = True
+
+
+class EmailPreferencesUpdateRequest(BaseModel):
+    account_welcome: Optional[bool] = None
+    account_plan_change: Optional[bool] = None
+    account_payment_receipt: Optional[bool] = None
+    account_invitation: Optional[bool] = None
+    doc_assigned: Optional[bool] = None
+    doc_review_complete: Optional[bool] = None
+    doc_digest: Optional[bool] = None

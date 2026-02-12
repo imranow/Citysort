@@ -40,10 +40,23 @@ def _deserialize_row(row: Any) -> dict[str, Any]:
     return record
 
 
+def _apply_workspace_scope(
+    *,
+    conditions: list[str],
+    params: list[Any],
+    workspace_id: Optional[str],
+    column: str = "workspace_id",
+) -> None:
+    if workspace_id is not None:
+        conditions.append(f"{column} = ?")
+        params.append(workspace_id)
+
+
 def create_document(*, document: dict[str, Any]) -> dict[str, Any]:
     now = utcnow_iso()
     payload = {
         "id": document["id"],
+        "workspace_id": document.get("workspace_id"),
         "filename": document["filename"],
         "storage_path": document["storage_path"],
         "source_channel": document.get("source_channel", "upload_portal"),
@@ -81,11 +94,20 @@ def create_document(*, document: dict[str, Any]) -> dict[str, Any]:
     return _deserialize_row(row)
 
 
-def get_document(document_id: str) -> Optional[dict[str, Any]]:
+def get_document(
+    document_id: str, workspace_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    conditions = ["id = ?"]
+    params: list[Any] = [document_id]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
+    query = f"SELECT * FROM documents WHERE {' AND '.join(conditions)}"
     with get_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM documents WHERE id = ?", (document_id,)
-        ).fetchone()
+        row = connection.execute(query, params).fetchone()
 
     return _deserialize_row(row) if row else None
 
@@ -95,6 +117,7 @@ def list_documents(
     status: Optional[str] = None,
     department: Optional[str] = None,
     assigned_to: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     query = "SELECT * FROM documents"
@@ -119,6 +142,12 @@ def list_documents(
     if assigned_to:
         conditions.append("assigned_to = ?")
         params.append(assigned_to)
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -133,10 +162,13 @@ def list_documents(
 
 
 def update_document(
-    document_id: str, *, updates: dict[str, Any]
+    document_id: str,
+    *,
+    updates: dict[str, Any],
+    workspace_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     if not updates:
-        return get_document(document_id)
+        return get_document(document_id, workspace_id=workspace_id)
 
     payload = dict(updates)
     payload["updated_at"] = utcnow_iso()
@@ -144,64 +176,110 @@ def update_document(
     assignments = ", ".join(f"{key} = ?" for key in payload)
     values = [_serialize_value(key, value) for key, value in payload.items()]
     values.append(document_id)
+    where_clause = "id = ?"
+    if workspace_id is not None:
+        where_clause += " AND workspace_id = ?"
+        values.append(workspace_id)
 
     with get_connection() as connection:
-        connection.execute(f"UPDATE documents SET {assignments} WHERE id = ?", values)
+        connection.execute(
+            f"UPDATE documents SET {assignments} WHERE {where_clause}", values
+        )
+        select_conditions = ["id = ?"]
+        select_params: list[Any] = [document_id]
+        _apply_workspace_scope(
+            conditions=select_conditions,
+            params=select_params,
+            workspace_id=workspace_id,
+            column="workspace_id",
+        )
         row = connection.execute(
-            "SELECT * FROM documents WHERE id = ?", (document_id,)
+            f"SELECT * FROM documents WHERE {' AND '.join(select_conditions)}",
+            select_params,
         ).fetchone()
 
     return _deserialize_row(row) if row else None
 
 
 def create_audit_event(
-    *, document_id: str, action: str, actor: str, details: Optional[str] = None
+    *,
+    document_id: str,
+    action: str,
+    actor: str,
+    details: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> None:
+    resolved_workspace_id = workspace_id
+    if resolved_workspace_id is None:
+        document = get_document(document_id)
+        if document:
+            resolved_workspace_id = document.get("workspace_id")
     with get_connection() as connection:
         connection.execute(
             """
-            INSERT INTO audit_events (document_id, action, actor, details, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO audit_events (workspace_id, document_id, action, actor, details, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (document_id, action, actor, details, utcnow_iso()),
+            (resolved_workspace_id, document_id, action, actor, details, utcnow_iso()),
         )
 
 
-def list_audit_events(document_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+def list_audit_events(
+    document_id: str,
+    *,
+    workspace_id: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    conditions = ["document_id = ?"]
+    params: list[Any] = [document_id]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
+    params.append(limit)
     with get_connection() as connection:
         rows = connection.execute(
-            """
-            SELECT id, document_id, action, actor, details, created_at
+            f"""
+            SELECT id, workspace_id, document_id, action, actor, details, created_at
             FROM audit_events
-            WHERE document_id = ?
+            WHERE {" AND ".join(conditions)}
             ORDER BY id DESC
             LIMIT ?
             """,
-            (document_id, limit),
+            params,
         ).fetchall()
 
     return [dict(row) for row in rows]
 
 
-def get_queue_snapshot() -> list[dict[str, Any]]:
+def get_queue_snapshot(workspace_id: Optional[str] = None) -> list[dict[str, Any]]:
+    where_sql = ""
+    params: list[Any] = []
+    if workspace_id is not None:
+        where_sql = "WHERE workspace_id = ?"
+        params.append(workspace_id)
     with get_connection() as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT
                 COALESCE(department, 'Unassigned') AS department,
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review,
                 SUM(CASE WHEN status IN ('routed', 'approved', 'corrected', 'acknowledged', 'assigned', 'in_progress', 'completed') THEN 1 ELSE 0 END) AS ready
             FROM documents
+            {where_sql}
             GROUP BY COALESCE(department, 'Unassigned')
             ORDER BY total DESC, department ASC
-            """
+            """,
+            params,
         ).fetchall()
 
     return [dict(row) for row in rows]
 
 
-def get_analytics_snapshot() -> dict[str, Any]:
+def get_analytics_snapshot(workspace_id: Optional[str] = None) -> dict[str, Any]:
     analytics: dict[str, Any] = {
         "total_documents": 0,
         "needs_review": 0,
@@ -217,9 +295,15 @@ def get_analytics_snapshot() -> dict[str, Any]:
         "by_status": [],
     }
 
+    where_sql = ""
+    where_params: list[Any] = []
+    if workspace_id is not None:
+        where_sql = "WHERE workspace_id = ?"
+        where_params.append(workspace_id)
+
     with get_connection() as connection:
         totals = connection.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total_documents,
                 SUM(CASE WHEN requires_review = 1 THEN 1 ELSE 0 END) AS needs_review,
@@ -227,7 +311,9 @@ def get_analytics_snapshot() -> dict[str, Any]:
                 SUM(CASE WHEN status IN ('routed', 'approved', 'corrected', 'completed', 'archived') THEN 1 ELSE 0 END) AS automated_documents,
                 AVG(COALESCE(confidence, 0)) AS average_confidence
             FROM documents
-            """
+            {where_sql}
+            """,
+            where_params,
         ).fetchone()
 
         if totals:
@@ -244,48 +330,54 @@ def get_analytics_snapshot() -> dict[str, Any]:
             )
 
         manual_unassigned_row = connection.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total
             FROM documents
-            WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
+            {"WHERE workspace_id = ? AND" if workspace_id is not None else "WHERE"} status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
               AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
-            """
+            """,
+            where_params,
         ).fetchone()
 
         by_type_rows = connection.execute(
-            """
+            f"""
             SELECT COALESCE(doc_type, 'unclassified') AS label, COUNT(*) AS count
             FROM documents
+            {where_sql}
             GROUP BY COALESCE(doc_type, 'unclassified')
             ORDER BY count DESC, label ASC
-            """
+            """,
+            where_params,
         ).fetchall()
 
         by_status_rows = connection.execute(
-            """
+            f"""
             SELECT status AS label, COUNT(*) AS count
             FROM documents
+            {where_sql}
             GROUP BY status
             ORDER BY count DESC, label ASC
-            """
+            """,
+            where_params,
         ).fetchall()
 
         overdue_row = connection.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total FROM documents
-            WHERE due_date IS NOT NULL AND due_date < ?
+            {"WHERE workspace_id = ? AND" if workspace_id is not None else "WHERE"} due_date IS NOT NULL AND due_date < ?
             AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
             """,
-            (utcnow_iso(),),
+            [*where_params, utcnow_iso()],
         ).fetchone()
 
         missing_contact_total = 0
         contact_rows = connection.execute(
-            """
+            f"""
             SELECT extracted_fields
             FROM documents
-            WHERE status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
-            """
+            {"WHERE workspace_id = ? AND" if workspace_id is not None else "WHERE"} status IN ('ingested', 'needs_review', 'acknowledged', 'assigned', 'in_progress', 'failed')
+            """,
+            where_params,
         ).fetchall()
         for row in contact_rows:
             raw = (
@@ -311,10 +403,16 @@ def get_analytics_snapshot() -> dict[str, Any]:
         # Emails sent today.
         try:
             today_start = utcnow_iso()[:10] + "T00:00:00"
-            emails_today_row = connection.execute(
-                "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
-                (today_start,),
-            ).fetchone()
+            if workspace_id is None:
+                emails_today_row = connection.execute(
+                    "SELECT COUNT(*) AS total FROM outbound_emails WHERE status = 'sent' AND sent_at >= ?",
+                    (today_start,),
+                ).fetchone()
+            else:
+                emails_today_row = connection.execute(
+                    "SELECT COUNT(*) AS total FROM outbound_emails WHERE workspace_id = ? AND status = 'sent' AND sent_at >= ?",
+                    (workspace_id, today_start),
+                ).fetchone()
             analytics["emails_sent_today"] = (
                 int(emails_today_row["total"]) if emails_today_row else 0
             )
@@ -549,6 +647,7 @@ def revoke_api_key(*, key_id: int) -> Optional[dict[str, Any]]:
 
 def create_invitation(
     *,
+    workspace_id: Optional[str] = None,
     email: str,
     role: str,
     actor: str,
@@ -564,14 +663,14 @@ def create_invitation(
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO invitations (email, role, token_hash, status, actor, created_at, expires_at, accepted_at)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?, NULL)
+            INSERT INTO invitations (workspace_id, email, role, token_hash, status, actor, created_at, expires_at, accepted_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, NULL)
             """,
-            (email, role, token_hash, actor, created_at, expires_at),
+            (workspace_id, email, role, token_hash, actor, created_at, expires_at),
         )
         row = connection.execute(
             """
-            SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+            SELECT id, workspace_id, email, role, status, actor, created_at, expires_at, accepted_at
             FROM invitations
             WHERE id = ?
             """,
@@ -582,16 +681,23 @@ def create_invitation(
 
 
 def list_invitations(
-    *, status: Optional[str] = None, limit: int = 100
+    *,
+    workspace_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
 ) -> list[dict[str, Any]]:
     query = """
-        SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+        SELECT id, workspace_id, email, role, status, actor, created_at, expires_at, accepted_at
         FROM invitations
     """
     params: list[Any] = []
 
+    if workspace_id is not None:
+        query += " WHERE workspace_id = ?"
+        params.append(workspace_id)
+
     if status:
-        query += " WHERE status = ?"
+        query += (" AND" if params else " WHERE") + " status = ?"
         params.append(status)
 
     query += " ORDER BY id DESC LIMIT ?"
@@ -603,11 +709,16 @@ def list_invitations(
     return [dict(row) for row in rows]
 
 
-def count_invitations(*, status: Optional[str] = None) -> int:
+def count_invitations(
+    *, workspace_id: Optional[str] = None, status: Optional[str] = None
+) -> int:
     query = "SELECT COUNT(*) AS total FROM invitations"
     params: list[Any] = []
+    if workspace_id is not None:
+        query += " WHERE workspace_id = ?"
+        params.append(workspace_id)
     if status:
-        query += " WHERE status = ?"
+        query += (" AND" if params else " WHERE") + " status = ?"
         params.append(status)
 
     with get_connection() as connection:
@@ -682,7 +793,7 @@ def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
         row = connection.execute(
             """
             SELECT id, email, full_name, role, status, plan_tier, stripe_customer_id,
-                   last_login_at, created_at, updated_at
+                   email_preferences, last_login_at, created_at, updated_at
             FROM users
             WHERE id = ?
             """,
@@ -750,6 +861,7 @@ def create_job(
     job_type: str,
     payload: dict[str, Any],
     actor: str,
+    workspace_id: Optional[str] = None,
     max_attempts: int = 3,
 ) -> dict[str, Any]:
     job_id = str(uuid4())
@@ -757,10 +869,18 @@ def create_job(
     with get_connection() as connection:
         connection.execute(
             """
-            INSERT INTO jobs (id, job_type, payload, status, result, error, actor, attempts, max_attempts, worker_id, created_at, started_at, finished_at)
-            VALUES (?, ?, ?, 'queued', NULL, NULL, ?, 0, ?, NULL, ?, NULL, NULL)
+            INSERT INTO jobs (id, workspace_id, job_type, payload, status, result, error, actor, attempts, max_attempts, worker_id, created_at, started_at, finished_at)
+            VALUES (?, ?, ?, ?, 'queued', NULL, NULL, ?, 0, ?, NULL, ?, NULL, NULL)
             """,
-            (job_id, job_type, json.dumps(payload), actor, max_attempts, created_at),
+            (
+                job_id,
+                workspace_id,
+                job_type,
+                json.dumps(payload),
+                actor,
+                max_attempts,
+                created_at,
+            ),
         )
         row = connection.execute(
             """
@@ -773,22 +893,44 @@ def create_job(
     return _deserialize_job(row) if row else {}
 
 
-def get_job(job_id: str) -> Optional[dict[str, Any]]:
+def get_job(
+    job_id: str, workspace_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    conditions = ["id = ?"]
+    params: list[Any] = [job_id]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
     with get_connection() as connection:
         row = connection.execute(
-            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+            f"SELECT * FROM jobs WHERE {' AND '.join(conditions)}", params
         ).fetchone()
     return _deserialize_job(row) if row else None
 
 
 def list_jobs(
-    *, status: Optional[str] = None, limit: int = 100
+    *,
+    status: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    limit: int = 100,
 ) -> list[dict[str, Any]]:
     query = "SELECT * FROM jobs"
     params: list[Any] = []
+    conditions: list[str] = []
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
     if status:
-        query += " WHERE status = ?"
+        conditions.append("status = ?")
         params.append(status)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
@@ -916,50 +1058,77 @@ def fail_job(*, job_id: str, error: str) -> Optional[dict[str, Any]]:
     return _deserialize_job(updated) if updated else None
 
 
-def count_overdue_documents() -> int:
+def count_overdue_documents(workspace_id: Optional[str] = None) -> int:
     now = utcnow_iso()
+    params: list[Any] = [now]
+    where_sql = "due_date IS NOT NULL AND due_date < ?"
+    if workspace_id is not None:
+        where_sql = "workspace_id = ? AND " + where_sql
+        params.insert(0, workspace_id)
     with get_connection() as connection:
         row = connection.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total FROM documents
-            WHERE due_date IS NOT NULL AND due_date < ?
+            WHERE {where_sql}
             AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
             """,
-            (now,),
+            params,
         ).fetchone()
     return int(row["total"]) if row else 0
 
 
-def list_overdue_documents(*, limit: int = 100) -> list[dict[str, Any]]:
+def list_overdue_documents(
+    *, workspace_id: Optional[str] = None, limit: int = 100
+) -> list[dict[str, Any]]:
     now = utcnow_iso()
+    params: list[Any] = [now, limit]
+    where_sql = "due_date IS NOT NULL AND due_date < ?"
+    if workspace_id is not None:
+        where_sql = "workspace_id = ? AND " + where_sql
+        params = [workspace_id, now, limit]
     with get_connection() as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT * FROM documents
-            WHERE due_date IS NOT NULL AND due_date < ?
+            WHERE {where_sql}
             AND status NOT IN ('approved', 'corrected', 'completed', 'archived')
             ORDER BY due_date ASC LIMIT ?
             """,
-            (now, limit),
+            params,
         ).fetchall()
     return [_deserialize_row(row) for row in rows]
 
 
-def list_assigned_to(user_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+def list_assigned_to(
+    user_id: str, *, workspace_id: Optional[str] = None, limit: int = 100
+) -> list[dict[str, Any]]:
+    conditions = ["assigned_to = ?"]
+    params: list[Any] = [user_id]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
+    params.append(limit)
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM documents WHERE assigned_to = ? ORDER BY updated_at DESC LIMIT ?",
-            (user_id, limit),
+            f"SELECT * FROM documents WHERE {' AND '.join(conditions)} ORDER BY updated_at DESC LIMIT ?",
+            params,
         ).fetchall()
     return [_deserialize_row(row) for row in rows]
 
 
-def list_unassigned_manual_documents(*, limit: int = 200) -> list[dict[str, Any]]:
+def list_unassigned_manual_documents(
+    *, workspace_id: Optional[str] = None, limit: int = 200
+) -> list[dict[str, Any]]:
+    workspace_condition = "workspace_id = ? AND" if workspace_id is not None else ""
+    params: list[Any] = [limit] if workspace_id is None else [workspace_id, limit]
     with get_connection() as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT * FROM documents
-            WHERE status IN ('needs_review', 'acknowledged')
+            WHERE {workspace_condition} status IN ('needs_review', 'acknowledged')
               AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
             ORDER BY
               CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
@@ -967,20 +1136,23 @@ def list_unassigned_manual_documents(*, limit: int = 200) -> list[dict[str, Any]
               updated_at DESC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
     return [_deserialize_row(row) for row in rows]
 
 
-def count_unassigned_manual_documents() -> int:
+def count_unassigned_manual_documents(workspace_id: Optional[str] = None) -> int:
+    workspace_condition = "workspace_id = ? AND" if workspace_id is not None else ""
+    params: list[Any] = [] if workspace_id is None else [workspace_id]
     with get_connection() as connection:
         row = connection.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total
             FROM documents
-            WHERE status IN ('needs_review', 'acknowledged')
+            WHERE {workspace_condition} status IN ('needs_review', 'acknowledged')
               AND (assigned_to IS NULL OR TRIM(assigned_to) = '')
-            """
+            """,
+            params,
         ).fetchone()
     return int(row["total"]) if row else 0
 
@@ -988,6 +1160,7 @@ def count_unassigned_manual_documents() -> int:
 def create_outbound_email(
     *,
     document_id: str,
+    workspace_id: Optional[str] = None,
     to_email: str,
     subject: str,
     body: str,
@@ -997,13 +1170,19 @@ def create_outbound_email(
     sent_at: Optional[str] = None,
 ) -> dict[str, Any]:
     created_at = utcnow_iso()
+    resolved_workspace_id = workspace_id
+    if resolved_workspace_id is None and document_id and document_id != "__account__":
+        document = get_document(document_id)
+        if document:
+            resolved_workspace_id = document.get("workspace_id")
     with get_connection() as connection:
         cursor = connection.execute(
             """
-            INSERT INTO outbound_emails (document_id, to_email, subject, body, status, provider, error, created_at, sent_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO outbound_emails (workspace_id, document_id, to_email, subject, body, status, provider, error, created_at, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                resolved_workspace_id,
                 document_id,
                 to_email,
                 subject,
@@ -1105,32 +1284,52 @@ def purge_outbound_emails_before(older_than_iso: str) -> int:
 # --- Invitation acceptance ---
 
 
-def get_invitation_by_token(token: str) -> Optional[dict[str, Any]]:
+def get_invitation_by_token(
+    token: str, workspace_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
     token_hash = _hash_secret(token)
+    conditions = ["token_hash = ?"]
+    params: list[Any] = [token_hash]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
     with get_connection() as connection:
         row = connection.execute(
-            """
-            SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+            f"""
+            SELECT id, workspace_id, email, role, status, actor, created_at, expires_at, accepted_at
             FROM invitations
-            WHERE token_hash = ?
+            WHERE {" AND ".join(conditions)}
             """,
-            (token_hash,),
+            params,
         ).fetchone()
     return dict(row) if row else None
 
 
-def validate_invitation(token: str) -> dict[str, Any]:
+def validate_invitation(
+    token: str, workspace_id: Optional[str] = None
+) -> dict[str, Any]:
     """Validate invitation token and return invitation details."""
     token_hash = _hash_secret(token)
     now = utcnow_iso()
+    conditions = ["token_hash = ?"]
+    params: list[Any] = [token_hash]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
     with get_connection() as connection:
         row = connection.execute(
-            """
-            SELECT id, email, role, status, expires_at
+            f"""
+            SELECT id, workspace_id, email, role, status, expires_at
             FROM invitations
-            WHERE token_hash = ?
+            WHERE {" AND ".join(conditions)}
             """,
-            (token_hash,),
+            params,
         ).fetchone()
         if not row:
             raise ValueError("Invalid invitation token.")
@@ -1142,38 +1341,55 @@ def validate_invitation(token: str) -> dict[str, Any]:
     return invitation
 
 
-def mark_invitation_accepted(invitation_id: int) -> dict[str, Any]:
+def mark_invitation_accepted(
+    invitation_id: int, workspace_id: Optional[str] = None
+) -> dict[str, Any]:
     """Mark a validated invitation as accepted."""
     now = utcnow_iso()
+    where_sql = "id = ? AND status = 'pending'"
+    update_params: list[Any] = [now, invitation_id]
+    if workspace_id is not None:
+        where_sql += " AND workspace_id = ?"
+        update_params.append(workspace_id)
     with get_connection() as connection:
         updated = connection.execute(
             """
             UPDATE invitations
             SET status = 'accepted', accepted_at = ?
-            WHERE id = ? AND status = 'pending'
-            """,
-            (now, invitation_id),
+            WHERE """
+            + where_sql,
+            update_params,
         )
         if updated.rowcount != 1:
             raise ValueError("Invitation has already been used or revoked.")
 
+        select_conditions = ["id = ?"]
+        select_params: list[Any] = [invitation_id]
+        _apply_workspace_scope(
+            conditions=select_conditions,
+            params=select_params,
+            workspace_id=workspace_id,
+            column="workspace_id",
+        )
         row = connection.execute(
-            """
-            SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+            f"""
+            SELECT id, workspace_id, email, role, status, actor, created_at, expires_at, accepted_at
             FROM invitations
-            WHERE id = ?
+            WHERE {" AND ".join(select_conditions)}
             """,
-            (invitation_id,),
+            select_params,
         ).fetchone()
     if not row:
         raise ValueError("Invitation not found.")
     return dict(row)
 
 
-def accept_invitation(token: str) -> dict[str, Any]:
+def accept_invitation(token: str, workspace_id: Optional[str] = None) -> dict[str, Any]:
     """Validate and mark an invitation as accepted. Returns the updated record."""
-    invitation = validate_invitation(token)
-    return mark_invitation_accepted(int(invitation["id"]))
+    invitation = validate_invitation(token, workspace_id=workspace_id)
+    return mark_invitation_accepted(
+        int(invitation["id"]), workspace_id=invitation.get("workspace_id")
+    )
 
 
 # --- Billing / Subscription ---
@@ -1223,6 +1439,7 @@ def get_user_by_stripe_customer(stripe_customer_id: str) -> Optional[dict[str, A
 def create_subscription(
     *,
     user_id: str,
+    workspace_id: Optional[str] = None,
     plan_tier: str,
     billing_type: str,
     stripe_subscription_id: Optional[str] = None,
@@ -1236,11 +1453,12 @@ def create_subscription(
         cursor = connection.execute(
             """
             INSERT INTO subscriptions
-                (user_id, plan_tier, billing_type, stripe_subscription_id, stripe_customer_id,
+                (workspace_id, user_id, plan_tier, billing_type, stripe_subscription_id, stripe_customer_id,
                  status, current_period_start, current_period_end, canceled_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
+                workspace_id,
                 user_id,
                 plan_tier,
                 billing_type,
@@ -1260,15 +1478,25 @@ def create_subscription(
     return dict(row)
 
 
-def get_active_subscription(user_id: str) -> Optional[dict[str, Any]]:
+def get_active_subscription(
+    user_id: str, workspace_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    conditions = ["user_id = ?", "status IN ('active', 'past_due')"]
+    params: list[Any] = [user_id]
+    _apply_workspace_scope(
+        conditions=conditions,
+        params=params,
+        workspace_id=workspace_id,
+        column="workspace_id",
+    )
     with get_connection() as connection:
         row = connection.execute(
-            """
+            f"""
             SELECT * FROM subscriptions
-            WHERE user_id = ? AND status IN ('active', 'past_due')
+            WHERE {" AND ".join(conditions)}
             ORDER BY created_at DESC LIMIT 1
             """,
-            (user_id,),
+            params,
         ).fetchone()
     return dict(row) if row else None
 
@@ -1301,6 +1529,7 @@ def update_subscription_status(
 def create_payment_event(
     *,
     user_id: Optional[str],
+    workspace_id: Optional[str] = None,
     stripe_event_id: str,
     event_type: str,
     amount_cents: Optional[int] = None,
@@ -1314,11 +1543,12 @@ def create_payment_event(
         cursor = connection.execute(
             """
             INSERT INTO payment_events
-                (user_id, stripe_event_id, event_type, amount_cents, currency,
+                (workspace_id, user_id, stripe_event_id, event_type, amount_cents, currency,
                  plan_tier, billing_type, raw_payload, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                workspace_id,
                 user_id,
                 stripe_event_id,
                 event_type,
@@ -1349,3 +1579,308 @@ def count_user_documents_this_month(user_id: Optional[str] = None) -> int:
             (month_start,),
         ).fetchone()
     return int(row["total"]) if row else 0
+
+
+def count_workspace_documents_this_month(workspace_id: str) -> int:
+    """Count documents created in the current month for a workspace."""
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM documents WHERE workspace_id = ? AND created_at >= ?",
+            (workspace_id, month_start),
+        ).fetchone()
+    return int(row["total"]) if row else 0
+
+
+# --- Workspaces ---
+
+
+def _slugify_workspace_name(name: str) -> str:
+    base = "".join(
+        c.lower() if c.isalnum() else "-" for c in str(name or "workspace").strip()
+    )
+    base = "-".join(filter(None, base.split("-"))) or "workspace"
+    return base[:64]
+
+
+def _unique_workspace_slug(connection: Any, base_slug: str) -> str:
+    candidate = base_slug
+    suffix = 1
+    while True:
+        row = connection.execute(
+            "SELECT id FROM workspaces WHERE slug = ?",
+            (candidate,),
+        ).fetchone()
+        if not row:
+            return candidate
+        suffix += 1
+        candidate = f"{base_slug}-{suffix}"
+
+
+def create_workspace(
+    *,
+    name: str,
+    owner_id: str,
+    plan_tier: str = "free",
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    workspace_id = str(uuid4())
+    now = utcnow_iso()
+    with get_connection() as connection:
+        slug = _unique_workspace_slug(connection, _slugify_workspace_name(name))
+        connection.execute(
+            """
+            INSERT INTO workspaces (id, name, slug, owner_id, plan_tier, stripe_customer_id, settings, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
+            """,
+            (
+                workspace_id,
+                name,
+                slug,
+                owner_id,
+                plan_tier,
+                json.dumps(settings or {}),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, joined_at)
+            VALUES (?, ?, 'admin', ?)
+            ON CONFLICT(workspace_id, user_id) DO NOTHING
+            """,
+            (workspace_id, owner_id, now),
+        )
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_workspace(workspace_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_workspace_by_stripe_customer(
+    stripe_customer_id: str,
+) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_workspace_by_slug(slug: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_user_workspaces(user_id: str) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT w.*, m.role AS member_role
+            FROM workspaces w
+            JOIN workspace_members m ON m.workspace_id = w.id
+            WHERE m.user_id = ?
+            ORDER BY w.created_at ASC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_workspace_role(user_id: str, workspace_id: str) -> Optional[str]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT role
+            FROM workspace_members
+            WHERE user_id = ? AND workspace_id = ?
+            """,
+            (user_id, workspace_id),
+        ).fetchone()
+    if not row:
+        return None
+    return str(row["role"])
+
+
+def add_workspace_member(
+    *, workspace_id: str, user_id: str, role: str = "member"
+) -> dict[str, Any]:
+    joined_at = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO workspace_members (workspace_id, user_id, role, joined_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role
+            """,
+            (workspace_id, user_id, role, joined_at),
+        )
+        row = connection.execute(
+            """
+            SELECT id, workspace_id, user_id, role, joined_at
+            FROM workspace_members
+            WHERE workspace_id = ? AND user_id = ?
+            """,
+            (workspace_id, user_id),
+        ).fetchone()
+    return dict(row)
+
+
+def remove_workspace_member(*, workspace_id: str, user_id: str) -> bool:
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+            (workspace_id, user_id),
+        )
+    return int(cursor.rowcount) > 0
+
+
+def list_workspace_members(workspace_id: str) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT m.id, m.workspace_id, m.user_id, m.role, m.joined_at,
+                   u.email, u.full_name, u.status
+            FROM workspace_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.workspace_id = ?
+            ORDER BY m.joined_at ASC
+            """,
+            (workspace_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_workspace(
+    workspace_id: str,
+    *,
+    name: Optional[str] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    updates: dict[str, Any] = {}
+    if name is not None:
+        updates["name"] = str(name).strip() or "Workspace"
+    if settings is not None:
+        updates["settings"] = json.dumps(settings)
+    if not updates:
+        return get_workspace(workspace_id)
+    updates["updated_at"] = utcnow_iso()
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [workspace_id]
+    with get_connection() as connection:
+        connection.execute(
+            f"UPDATE workspaces SET {assignments} WHERE id = ?",
+            values,
+        )
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_workspace_plan(
+    workspace_id: str,
+    *,
+    plan_tier: str,
+    stripe_customer_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    updates: dict[str, Any] = {
+        "plan_tier": plan_tier,
+        "updated_at": utcnow_iso(),
+    }
+    if stripe_customer_id is not None:
+        updates["stripe_customer_id"] = stripe_customer_id
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [workspace_id]
+    with get_connection() as connection:
+        connection.execute(
+            f"UPDATE workspaces SET {assignments} WHERE id = ?",
+            values,
+        )
+        row = connection.execute(
+            "SELECT * FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_default_workspace_for_user(user_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT w.*, m.role AS member_role
+            FROM workspaces w
+            JOIN workspace_members m ON m.workspace_id = w.id
+            WHERE m.user_id = ?
+            ORDER BY CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END, w.created_at ASC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+# ── Email Preferences ────────────────────────────────────────────────
+
+_DEFAULT_EMAIL_PREFS: dict[str, bool] = {
+    "account_welcome": True,
+    "account_plan_change": True,
+    "account_payment_receipt": True,
+    "account_invitation": True,
+    "doc_assigned": True,
+    "doc_review_complete": True,
+    "doc_digest": True,
+}
+
+
+def get_user_email_preferences(user_id: str) -> dict[str, bool]:
+    """Return merged email preferences for a user (defaults + stored)."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT email_preferences FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if not row or not row["email_preferences"]:
+        return dict(_DEFAULT_EMAIL_PREFS)
+    try:
+        stored = json.loads(row["email_preferences"])
+    except (json.JSONDecodeError, TypeError):
+        stored = {}
+    return {**_DEFAULT_EMAIL_PREFS, **stored}
+
+
+def update_user_email_preferences(
+    user_id: str, prefs: dict[str, bool]
+) -> dict[str, bool]:
+    """Merge and persist email preferences for a user."""
+    current = get_user_email_preferences(user_id)
+    merged = {
+        **current,
+        **{k: v for k, v in prefs.items() if k in _DEFAULT_EMAIL_PREFS},
+    }
+    now = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE users SET email_preferences = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(merged), now, user_id),
+        )
+    return merged

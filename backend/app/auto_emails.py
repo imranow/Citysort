@@ -7,7 +7,9 @@ from typing import Any, Optional
 
 from .config import (
     AUTO_ACK_EMAIL_ENABLED,
+    AUTO_ASSIGNMENT_EMAIL_ENABLED,
     AUTO_MISSING_INFO_EMAIL_ENABLED,
+    AUTO_REVIEW_COMPLETE_EMAIL_ENABLED,
     AUTO_STATUS_EMAIL_ENABLED,
 )
 from .emailer import email_configured, send_email
@@ -16,6 +18,8 @@ from .repository import (
     create_audit_event,
     create_outbound_email,
     get_document,
+    get_user_by_id,
+    get_user_email_preferences,
     update_outbound_email,
 )
 from .templates import compose_template_email, list_templates
@@ -154,3 +158,150 @@ def send_auto_status_update(document_id: str, new_status: str) -> bool:
         document_id=document_id,
         email_type="status_update",
     )
+
+
+def send_assignment_notification(document_id: str, assigned_user_id: str) -> bool:
+    """Send email to the user when a document is assigned to them."""
+    if not AUTO_ASSIGNMENT_EMAIL_ENABLED:
+        return False
+    if not email_configured():
+        return False
+
+    user = get_user_by_id(assigned_user_id)
+    if not user:
+        return False
+
+    # Check user email preference
+    prefs = get_user_email_preferences(assigned_user_id)
+    if not prefs.get("doc_assigned", True):
+        return False
+
+    doc = get_document(document_id)
+    if not doc:
+        return False
+
+    to_email = user.get("email")
+    if not to_email:
+        return False
+
+    name = user.get("full_name") or to_email.split("@")[0]
+    filename = doc.get("filename", "Unknown")
+    doc_type = doc.get("doc_type", "Unknown")
+    department = doc.get("department", "Unknown")
+
+    subject = f"CitySort AI — Document assigned to you: {filename}"
+    body = (
+        f"Hi {name},\n\n"
+        f"A document has been assigned to you for review.\n\n"
+        f"  Filename: {filename}\n"
+        f"  Type: {doc_type}\n"
+        f"  Department: {department}\n\n"
+        "Please log in to your dashboard to review this document.\n\n"
+        "— The CitySort AI Team"
+    )
+
+    record = create_outbound_email(
+        document_id=document_id,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        status="pending",
+    )
+
+    try:
+        send_email(to_email=to_email, subject=subject, body=body)
+        from datetime import datetime, timezone
+
+        update_outbound_email(
+            int(record["id"]),
+            status="sent",
+            sent_at=datetime.now(timezone.utc).isoformat(),
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="assignment_email_sent",
+            actor="system_auto",
+            details=f"to={to_email}",
+        )
+        logger.info("Assignment email sent to %s for doc %s", to_email, document_id)
+        return True
+    except Exception as exc:
+        update_outbound_email(int(record["id"]), status="failed", error=str(exc))
+        logger.warning("Assignment email failed for %s: %s", document_id, exc)
+        return False
+
+
+def send_review_complete_notification(document_id: str) -> bool:
+    """Send email when a document review is completed (approved/corrected)."""
+    if not AUTO_REVIEW_COMPLETE_EMAIL_ENABLED:
+        return False
+    if not email_configured():
+        return False
+
+    doc = get_document(document_id)
+    if not doc:
+        return False
+
+    # Notify the assigned user if there is one
+    assigned_to = doc.get("assigned_to")
+    if not assigned_to:
+        return False
+
+    user = get_user_by_id(assigned_to)
+    if not user:
+        return False
+
+    prefs = get_user_email_preferences(assigned_to)
+    if not prefs.get("doc_review_complete", True):
+        return False
+
+    to_email = user.get("email")
+    if not to_email:
+        return False
+
+    name = user.get("full_name") or to_email.split("@")[0]
+    filename = doc.get("filename", "Unknown")
+    status = doc.get("status", "approved")
+
+    subject = f"CitySort AI — Document {status}: {filename}"
+    body = (
+        f"Hi {name},\n\n"
+        f"A document assigned to you has been {status}.\n\n"
+        f"  Filename: {filename}\n"
+        f"  Status: {status}\n"
+        f"  Department: {doc.get('department', 'Unknown')}\n\n"
+        "You can view the details in your dashboard.\n\n"
+        "— The CitySort AI Team"
+    )
+
+    record = create_outbound_email(
+        document_id=document_id,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        status="pending",
+    )
+
+    try:
+        send_email(to_email=to_email, subject=subject, body=body)
+        from datetime import datetime, timezone
+
+        update_outbound_email(
+            int(record["id"]),
+            status="sent",
+            sent_at=datetime.now(timezone.utc).isoformat(),
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="review_complete_email_sent",
+            actor="system_auto",
+            details=f"to={to_email} status={status}",
+        )
+        logger.info(
+            "Review complete email sent to %s for doc %s", to_email, document_id
+        )
+        return True
+    except Exception as exc:
+        update_outbound_email(int(record["id"]), status="failed", error=str(exc))
+        logger.warning("Review complete email failed for %s: %s", document_id, exc)
+        return False
