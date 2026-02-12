@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import logging
 import mimetypes
 import re
@@ -24,7 +25,11 @@ from .auth import (
     role_allows,
     set_user_role,
 )
+from starlette.responses import RedirectResponse
+
 from .config import (
+    APPROVED_EXPORT_DIR,
+    APPROVED_EXPORT_ENABLED,
     ANTHROPIC_API_KEY,
     APP_ENV,
     AUTH_SECRET,
@@ -48,6 +53,8 @@ from .config import (
     REQUIRE_AUTH,
     STRICT_APPROVAL_ROLE,
     STRICT_AUTH_SECRET,
+    STRIPE_ENABLED,
+    STRIPE_PUBLISHABLE_KEY,
     TRUSTED_HOSTS,
     UPLOAD_DIR,
 )
@@ -99,6 +106,9 @@ from .repository import (
     list_unassigned_manual_documents,
     list_overdue_documents,
     revoke_api_key,
+    get_active_subscription,
+    mark_invitation_accepted,
+    validate_invitation,
     update_outbound_email,
     update_document,
 )
@@ -118,6 +128,13 @@ from .templates import (
     list_templates,
     render_template,
     update_template,
+)
+from .stripe_billing import (
+    create_checkout_session,
+    create_portal_session,
+    enforce_plan_limits,
+    get_plan_info,
+    handle_webhook_event,
 )
 from .watcher import start_watcher, stop_watcher
 from .security import (
@@ -199,6 +216,12 @@ from .schemas import (
     TemplateRenderResponse,
     TemplateUpdateRequest,
     TransitionRequest,
+    AuthSignupRequest,
+    CheckoutRequest,
+    CheckoutResponse,
+    PlansResponse,
+    PortalResponse,
+    SubscriptionResponse,
     UserCreateRequest,
     UserListResponse,
     UserRecord,
@@ -288,8 +311,10 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _rate_limiter = SlidingWindowRateLimiter()
 
 
-def _rate_limit_scope(path: str) -> tuple[str, int]:
+def _rate_limit_scope(path: str) -> Optional[tuple[str, int]]:
     normalized = str(path or "").strip().lower()
+    if not normalized.startswith("/api/"):
+        return None
     if normalized.startswith("/api/documents/upload") or normalized.startswith(
         "/api/documents/import"
     ):
@@ -321,39 +346,41 @@ async def secure_request_middleware(request: Request, call_next):
 
     rate_decision = None
     if RATE_LIMIT_ENABLED:
-        scope, limit = _rate_limit_scope(path)
-        rate_decision = _rate_limiter.check(
-            f"{source_ip}:{scope}",
-            limit=limit,
-            window_seconds=RATE_LIMIT_WINDOW_SECONDS,
-        )
-        if not rate_decision.allowed:
-            response = JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded. Please retry later."},
+        scoped_limit = _rate_limit_scope(path)
+        if scoped_limit is not None:
+            scope, limit = scoped_limit
+            rate_decision = _rate_limiter.check(
+                f"{source_ip}:{scope}",
+                limit=limit,
+                window_seconds=RATE_LIMIT_WINDOW_SECONDS,
             )
-            response.headers["Retry-After"] = str(rate_decision.reset_seconds)
-            response.headers["X-RateLimit-Limit"] = str(rate_decision.limit)
-            response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
-            response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
-            response.headers["X-Request-ID"] = request_id
-            apply_security_headers(response)
-            observe_request(
-                method=request.method,
-                path=path,
-                status_code=response.status_code,
-                started_at=started,
-            )
-            logger.warning(
-                "rate_limited method=%s path=%s ip=%s window=%ss limit=%s",
-                request.method,
-                path,
-                source_ip,
-                RATE_LIMIT_WINDOW_SECONDS,
-                rate_decision.limit,
-                extra={"request_id": request_id},
-            )
-            return response
+            if not rate_decision.allowed:
+                response = JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded. Please retry later."},
+                )
+                response.headers["Retry-After"] = str(rate_decision.reset_seconds)
+                response.headers["X-RateLimit-Limit"] = str(rate_decision.limit)
+                response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
+                response.headers["X-RateLimit-Reset"] = str(rate_decision.reset_seconds)
+                response.headers["X-Request-ID"] = request_id
+                apply_security_headers(response)
+                observe_request(
+                    method=request.method,
+                    path=path,
+                    status_code=response.status_code,
+                    started_at=started,
+                )
+                logger.warning(
+                    "rate_limited method=%s path=%s ip=%s window=%ss limit=%s",
+                    request.method,
+                    path,
+                    source_ip,
+                    RATE_LIMIT_WINDOW_SECONDS,
+                    rate_decision.limit,
+                    extra={"request_id": request_id},
+                )
+                return response
 
     try:
         response = await call_next(request)
@@ -401,6 +428,77 @@ def _coerce_optional_text(value: object | None) -> Optional[str]:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _status_is_approved(status: object) -> bool:
+    normalized = str(status or "").strip().lower()
+    return normalized in {"approved", "corrected"}
+
+
+def _export_approved_snapshot(
+    document: dict[str, object], *, actor: str, trigger: str
+) -> None:
+    if not APPROVED_EXPORT_ENABLED:
+        return
+    if not _status_is_approved(document.get("status")):
+        return
+
+    document_id = str(document.get("id", "")).strip()
+    source_path_raw = str(document.get("storage_path", "")).strip()
+    if not document_id or not source_path_raw:
+        return
+
+    source_path = Path(source_path_raw)
+    if not source_path.exists() or not source_path.is_file():
+        logger.warning(
+            "approved_export_skipped document_id=%s reason=source_missing path=%s",
+            document_id,
+            source_path_raw,
+        )
+        return
+
+    safe_filename = Path(str(document.get("filename") or source_path.name)).name
+    target_path = APPROVED_EXPORT_DIR / f"{document_id}_{safe_filename}"
+    metadata_path = APPROVED_EXPORT_DIR / f"{document_id}.meta.json"
+    status = str(document.get("status", "")).strip().lower()
+
+    try:
+        APPROVED_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(read_document_bytes(source_path))
+        metadata = {
+            "document_id": document_id,
+            "status": status,
+            "trigger": trigger,
+            "source_path": str(source_path),
+            "export_path": str(target_path),
+            "exported_at": _utcnow_iso(),
+        }
+        metadata_path.write_text(
+            json.dumps(metadata, separators=(",", ":"), ensure_ascii=True),
+            encoding="utf-8",
+        )
+        create_audit_event(
+            document_id=document_id,
+            action="approved_exported",
+            actor=actor,
+            details=f"status={status} trigger={trigger} path={target_path}",
+        )
+    except Exception as exc:  # pragma: no cover - runtime safety
+        logger.warning(
+            "approved_export_failed document_id=%s trigger=%s error=%s",
+            document_id,
+            trigger,
+            exc,
+        )
+        try:
+            create_audit_event(
+                document_id=document_id,
+                action="approved_export_failed",
+                actor=actor,
+                details=f"trigger={trigger} error={exc}",
+            )
+        except Exception:
+            pass
 
 
 def _enforce(
@@ -584,7 +682,7 @@ def _asset_version(filename: str) -> str:
 
 
 _CACHE_BUST_RE = re.compile(
-    r'(/static/(styles\.v2\.css|app\.v2\.js))\?v=[^"\']+',
+    r'(/static/(styles\.v2\.css|app\.v2\.js|landing\.css|landing\.js))\?v=[^"\']+',
 )
 
 
@@ -599,12 +697,114 @@ def _inject_cache_busters(html: str) -> str:
     return _CACHE_BUST_RE.sub(_replacer, html)
 
 
-@app.get("/")
-def root() -> Response:
+def _serve_landing(invite_token: Optional[str] = None) -> Response:
+    """Serve the landing page HTML, injecting Stripe publishable key and invite token."""
+    landing_path = FRONTEND_DIR / "landing.html"
+    if not landing_path.exists():
+        # Fallback to dashboard if no landing page yet
+        return _serve_dashboard()
+    html = landing_path.read_text(encoding="utf-8")
+    html = _inject_cache_busters(html)
+    # Inject config into a script tag
+    config_payload = {
+        "stripe_publishable_key": STRIPE_PUBLISHABLE_KEY,
+        "stripe_enabled": STRIPE_ENABLED,
+        "invite_token": invite_token or "",
+    }
+    inject = (
+        "<script>window.__CITYSORT_CONFIG__="
+        f"{json.dumps(config_payload, separators=(',', ':'))};</script>"
+    )
+    html = html.replace("</head>", f"{inject}\n</head>", 1)
+    return Response(content=html, media_type="text/html")
+
+
+def _serve_dashboard() -> Response:
+    """Serve the existing dashboard SPA with cache busters."""
     index_path = FRONTEND_DIR / "index.html"
     html = index_path.read_text(encoding="utf-8")
     html = _inject_cache_busters(html)
     return Response(content=html, media_type="text/html")
+
+
+@app.get("/")
+def root(request: Request) -> Response:
+    """Serve landing page for unauthenticated, redirect to /app for authenticated."""
+    # Check for auth token in cookie or Authorization header
+    auth_header = request.headers.get("authorization", "").strip()
+    token = None
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+    if token:
+        try:
+            from .auth import decode_access_token
+
+            decode_access_token(token)
+            return RedirectResponse(url="/app", status_code=302)
+        except Exception:
+            pass
+
+    return _serve_landing()
+
+
+@app.get("/app")
+def dashboard_app() -> Response:
+    """Serve the dashboard SPA."""
+    return _serve_dashboard()
+
+
+@app.get("/invite/{token}")
+def invite_page(token: str) -> Response:
+    """Serve landing page with invitation token pre-populated."""
+    return _serve_landing(invite_token=token)
+
+
+@app.post("/api/auth/signup", response_model=AuthResponse)
+def auth_signup(payload: AuthSignupRequest) -> AuthResponse:
+    """Invite-only user registration."""
+    from .auth import create_access_token
+
+    requested_email = payload.email.strip().lower()
+
+    try:
+        invitation = validate_invitation(payload.invitation_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    invited_email = str(invitation.get("email", "")).strip().lower()
+    if invited_email and invited_email != requested_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Invitation token is only valid for the invited email address.",
+        )
+
+    invited_role = str(invitation.get("role", "viewer")).strip().lower()
+    if invited_role == "member":
+        invited_role = "viewer"
+    if invited_role not in {"viewer", "operator", "admin"}:
+        raise HTTPException(status_code=400, detail="Invitation role is invalid.")
+
+    try:
+        user = create_user_account(
+            email=requested_email,
+            password=payload.password,
+            role=invited_role,
+            full_name=payload.full_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        mark_invitation_accepted(int(invitation["id"]))
+    except ValueError:
+        logger.warning(
+            "Invitation %s could not be marked accepted after successful signup.",
+            invitation.get("id"),
+        )
+
+    token = create_access_token(user_id=user["id"], role=user["role"])
+    return AuthResponse(access_token=token, user=UserRecord(**user))
 
 
 @app.post("/api/auth/bootstrap", response_model=AuthResponse)
@@ -633,6 +833,19 @@ def auth_me(request: Request) -> UserRecord:
     identity = _enforce(request, role="viewer", allow_api_key=False)
     user = identity.get("user")
     if not user:
+        if not REQUIRE_AUTH:
+            now = _utcnow_iso()
+            return UserRecord(
+                id="local-dev-user",
+                email="dev@citysort.local",
+                full_name="Local Development User",
+                role=str(identity.get("role", "admin")),
+                status="active",
+                plan_tier="enterprise",
+                last_login_at=now,
+                created_at=now,
+                updated_at=now,
+            )
         raise HTTPException(status_code=401, detail="User session required.")
     return UserRecord(**user)
 
@@ -673,6 +886,95 @@ def auth_update_user_role(
     return UserRecord(**updated)
 
 
+# --- Billing / Stripe ---
+
+
+@app.get("/api/billing/plans", response_model=PlansResponse)
+def billing_plans() -> PlansResponse:
+    """Return available plans and pricing (public)."""
+    from .schemas import PlanInfo
+
+    plans = [PlanInfo(**p) for p in get_plan_info()]
+    return PlansResponse(plans=plans)
+
+
+@app.get("/api/billing/subscription", response_model=SubscriptionResponse)
+def billing_subscription(request: Request) -> SubscriptionResponse:
+    """Return the current user's subscription details."""
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+
+    sub = get_active_subscription(user["id"])
+    if sub:
+        return SubscriptionResponse(
+            plan_tier=sub["plan_tier"],
+            billing_type=sub.get("billing_type"),
+            status=sub["status"],
+            current_period_end=sub.get("current_period_end"),
+            stripe_enabled=STRIPE_ENABLED,
+        )
+    return SubscriptionResponse(
+        plan_tier=user.get("plan_tier", "free"),
+        status="active",
+        stripe_enabled=STRIPE_ENABLED,
+    )
+
+
+@app.post("/api/billing/checkout", response_model=CheckoutResponse)
+def billing_checkout(request: Request, payload: CheckoutRequest) -> CheckoutResponse:
+    """Create a Stripe Checkout Session."""
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+
+    base_url = str(request.base_url).rstrip("/")
+    checkout_url = create_checkout_session(
+        user_id=user["id"],
+        user_email=user["email"],
+        plan_tier=payload.plan_tier,
+        billing_type=payload.billing_type,
+        success_url=f"{base_url}/app?billing=success",
+        cancel_url=f"{base_url}/app?billing=canceled",
+    )
+    return CheckoutResponse(checkout_url=checkout_url)
+
+
+@app.get("/api/billing/portal", response_model=PortalResponse)
+def billing_portal(request: Request) -> PortalResponse:
+    """Create a Stripe Customer Portal session."""
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    user = identity.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="User session required.")
+
+    stripe_customer_id = user.get("stripe_customer_id")
+    if not stripe_customer_id:
+        raise HTTPException(
+            status_code=400, detail="No Stripe customer linked to this account."
+        )
+
+    base_url = str(request.base_url).rstrip("/")
+    portal_url = create_portal_session(
+        stripe_customer_id=stripe_customer_id,
+        return_url=f"{base_url}/app",
+    )
+    return PortalResponse(portal_url=portal_url)
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request) -> dict:
+    """Handle Stripe webhook events (verified by signature, no auth middleware)."""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    return handle_webhook_event(payload, sig_header)
+
+
+# --- Document Endpoints ---
+
+
 @app.post("/api/documents/upload", response_model=DocumentResponse)
 async def upload_document(
     request: Request = None,
@@ -682,6 +984,11 @@ async def upload_document(
 ) -> DocumentResponse:
     identity = _enforce(request, role="operator")
     actor = str(identity.get("actor", "upload_portal"))
+
+    # Plan enforcement: check document upload limits
+    user = identity.get("user")
+    if user and STRIPE_ENABLED:
+        enforce_plan_limits(user["id"], "upload_document")
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="File name is required")
@@ -1042,7 +1349,12 @@ def import_from_connector_endpoint(
     payload: ConnectorImportRequest,
     request: Request = None,
 ) -> ConnectorImportResponse:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+
+    # Plan enforcement: check connector access limits
+    user = identity.get("user")
+    if user and STRIPE_ENABLED:
+        enforce_plan_limits(user["id"], "use_connector")
 
     # Use provided config, or fall back to saved config
     config = payload.config
@@ -1261,6 +1573,11 @@ def review_document(
             f"approve={payload.approve} corrected_doc_type={payload.corrected_doc_type} "
             f"allowed_types={','.join(sorted(get_active_rules()[0].keys()))}"
         ),
+    )
+    _export_approved_snapshot(
+        updated,
+        actor=str(identity.get("actor", payload.actor)),
+        trigger="review",
     )
 
     return DocumentResponse(**updated)
@@ -1598,6 +1915,11 @@ def transition_document(
         title=f"{document['filename']}: {current} → {payload.status}",
         document_id=document_id,
     )
+    _export_approved_snapshot(
+        updated,
+        actor=str(identity.get("actor", payload.actor)),
+        trigger="transition",
+    )
 
     # Auto-send status update email to citizen on key transitions.
     try:
@@ -1709,7 +2031,13 @@ def run_anthropic_automation_sweep(
     payload: AutomationAnthropicSweepRequest,
     request: Request = None,
 ) -> AutomationAnthropicSweepResponse:
-    _enforce(request, role="operator")
+    identity = _enforce(request, role="operator")
+
+    # Plan enforcement: check AI classifier access
+    user = identity.get("user")
+    if user and STRIPE_ENABLED:
+        enforce_plan_limits(user["id"], "use_ai_classifier")
+
     if not ANTHROPIC_API_KEY:
         raise HTTPException(
             status_code=503,
@@ -2038,7 +2366,7 @@ def bulk_document_action(
                 continue
 
             if payload.action == "approve":
-                update_document(
+                updated_doc = update_document(
                     doc_id,
                     updates={
                         "status": "approved",
@@ -2052,6 +2380,10 @@ def bulk_document_action(
                     action="bulk_approved",
                     actor=actor,
                 )
+                if updated_doc:
+                    _export_approved_snapshot(
+                        updated_doc, actor=actor, trigger="bulk_approve"
+                    )
 
             elif payload.action == "assign":
                 user_id = payload.params.get("user_id")
@@ -2080,13 +2412,17 @@ def bulk_document_action(
                         f"{doc_id}: invalid transition {doc['status']} → {target_status}"
                     )
                     continue
-                update_document(doc_id, updates={"status": target_status})
+                updated_doc = update_document(doc_id, updates={"status": target_status})
                 create_audit_event(
                     document_id=doc_id,
                     action="bulk_transition",
                     actor=actor,
                     details=f"to={target_status}",
                 )
+                if updated_doc:
+                    _export_approved_snapshot(
+                        updated_doc, actor=actor, trigger="bulk_transition"
+                    )
 
             else:
                 errors.append(f"{doc_id}: unknown action '{payload.action}'")

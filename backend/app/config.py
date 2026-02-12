@@ -10,6 +10,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 PROCESSED_DIR = DATA_DIR / "processed"
 DATABASE_PATH = DATA_DIR / "citysort.db"
+APPROVED_EXPORT_DIR_DEFAULT = DATA_DIR / "approved"
 
 try:
     from dotenv import load_dotenv
@@ -89,6 +90,16 @@ def _normalize_database_url(raw_url: str) -> str:
 
 CONFIDENCE_THRESHOLD = _env_float("CITYSORT_CONFIDENCE_THRESHOLD", 0.82)
 FORCE_REVIEW_DOC_TYPES = _env_csv_set("CITYSORT_FORCE_REVIEW_DOC_TYPES")
+APPROVED_EXPORT_ENABLED = _env_bool("CITYSORT_APPROVED_EXPORT_ENABLED", True)
+_approved_export_dir_raw = os.getenv(
+    "CITYSORT_APPROVED_EXPORT_DIR", str(APPROVED_EXPORT_DIR_DEFAULT)
+).strip()
+if _approved_export_dir_raw:
+    APPROVED_EXPORT_DIR = Path(_approved_export_dir_raw).expanduser()
+else:
+    APPROVED_EXPORT_DIR = APPROVED_EXPORT_DIR_DEFAULT
+if not APPROVED_EXPORT_DIR.is_absolute():
+    APPROVED_EXPORT_DIR = (PROJECT_ROOT / APPROVED_EXPORT_DIR).resolve()
 
 # Runtime environment
 APP_ENV = os.getenv("CITYSORT_ENV", "development").strip().lower() or "development"
@@ -260,7 +271,10 @@ SECURITY_HEADERS_ENABLED = _env_bool("CITYSORT_SECURITY_HEADERS_ENABLED", True)
 CONTENT_SECURITY_POLICY = os.getenv(
     "CITYSORT_CONTENT_SECURITY_POLICY",
     "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; "
-    "img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';",
+    "img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' https://js.stripe.com; "
+    "connect-src 'self' https://api.stripe.com; "
+    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com;",
 ).strip()
 REFERRER_POLICY = os.getenv(
     "CITYSORT_REFERRER_POLICY", "strict-origin-when-cross-origin"
@@ -385,6 +399,32 @@ SENTRY_TRACES_SAMPLE_RATE = _env_float(
     "CITYSORT_SENTRY_TRACES_SAMPLE_RATE", 0.0, min_value=0.0, max_value=1.0
 )
 PROMETHEUS_ENABLED = _env_bool("CITYSORT_PROMETHEUS_ENABLED", True)
+
+# Stripe Billing
+STRIPE_ENABLED = _env_bool("CITYSORT_STRIPE_ENABLED", False)
+STRIPE_SECRET_KEY = os.getenv("CITYSORT_STRIPE_SECRET_KEY", "").strip()
+STRIPE_PUBLISHABLE_KEY = os.getenv("CITYSORT_STRIPE_PUBLISHABLE_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.getenv("CITYSORT_STRIPE_WEBHOOK_SECRET", "").strip()
+STRIPE_PRO_MONTHLY_PRICE_ID = os.getenv(
+    "CITYSORT_STRIPE_PRO_MONTHLY_PRICE_ID", ""
+).strip()
+STRIPE_PRO_LIFETIME_PRICE_ID = os.getenv(
+    "CITYSORT_STRIPE_PRO_LIFETIME_PRICE_ID", ""
+).strip()
+STRIPE_ENTERPRISE_MONTHLY_PRICE_ID = os.getenv(
+    "CITYSORT_STRIPE_ENTERPRISE_MONTHLY_PRICE_ID", ""
+).strip()
+STRIPE_ENTERPRISE_LIFETIME_PRICE_ID = os.getenv(
+    "CITYSORT_STRIPE_ENTERPRISE_LIFETIME_PRICE_ID", ""
+).strip()
+
+# Plan limits (Enterprise = unlimited, no config needed)
+PLAN_FREE_DOCUMENT_LIMIT = _env_int(
+    "CITYSORT_PLAN_FREE_DOCUMENT_LIMIT", 50, min_value=1, max_value=10000
+)
+PLAN_PRO_DOCUMENT_LIMIT = _env_int(
+    "CITYSORT_PLAN_PRO_DOCUMENT_LIMIT", 5000, min_value=1, max_value=100000
+)
 
 # Deployment integration
 DEPLOY_PROVIDER = os.getenv("CITYSORT_DEPLOY_PROVIDER", "local").strip().lower()

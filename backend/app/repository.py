@@ -629,20 +629,31 @@ def create_user(
     password_hash: str,
     role: str,
     status: str = "active",
+    plan_tier: str = "free",
 ) -> dict[str, Any]:
     user_id = str(uuid4())
     now = utcnow_iso()
     with get_connection() as connection:
         connection.execute(
             """
-            INSERT INTO users (id, email, full_name, password_hash, role, status, last_login_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            INSERT INTO users (id, email, full_name, password_hash, role, status, plan_tier, last_login_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
-            (user_id, email, full_name, password_hash, role, status, now, now),
+            (
+                user_id,
+                email,
+                full_name,
+                password_hash,
+                role,
+                status,
+                plan_tier,
+                now,
+                now,
+            ),
         )
         row = connection.execute(
             """
-            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            SELECT id, email, full_name, role, status, plan_tier, last_login_at, created_at, updated_at
             FROM users
             WHERE id = ?
             """,
@@ -654,9 +665,7 @@ def create_user(
 def get_user_by_email(
     email: str, *, include_password_hash: bool = False
 ) -> Optional[dict[str, Any]]:
-    select_fields = (
-        "id, email, full_name, role, status, last_login_at, created_at, updated_at"
-    )
+    select_fields = "id, email, full_name, role, status, plan_tier, last_login_at, created_at, updated_at"
     if include_password_hash:
         select_fields = f"{select_fields}, password_hash"
 
@@ -672,7 +681,8 @@ def get_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
     with get_connection() as connection:
         row = connection.execute(
             """
-            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            SELECT id, email, full_name, role, status, plan_tier, stripe_customer_id,
+                   last_login_at, created_at, updated_at
             FROM users
             WHERE id = ?
             """,
@@ -685,7 +695,7 @@ def list_users(*, limit: int = 200) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
             """
-            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            SELECT id, email, full_name, role, status, plan_tier, last_login_at, created_at, updated_at
             FROM users
             ORDER BY created_at DESC
             LIMIT ?
@@ -713,7 +723,7 @@ def update_user_role(user_id: str, *, role: str) -> Optional[dict[str, Any]]:
         )
         row = connection.execute(
             """
-            SELECT id, email, full_name, role, status, last_login_at, created_at, updated_at
+            SELECT id, email, full_name, role, status, plan_tier, last_login_at, created_at, updated_at
             FROM users
             WHERE id = ?
             """,
@@ -1090,3 +1100,252 @@ def purge_outbound_emails_before(older_than_iso: str) -> int:
             (older_than_iso,),
         )
     return max(int(cursor.rowcount), 0)
+
+
+# --- Invitation acceptance ---
+
+
+def get_invitation_by_token(token: str) -> Optional[dict[str, Any]]:
+    token_hash = _hash_secret(token)
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+            FROM invitations
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def validate_invitation(token: str) -> dict[str, Any]:
+    """Validate invitation token and return invitation details."""
+    token_hash = _hash_secret(token)
+    now = utcnow_iso()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, email, role, status, expires_at
+            FROM invitations
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Invalid invitation token.")
+        invitation = dict(row)
+        if invitation["status"] != "pending":
+            raise ValueError("Invitation has already been used or revoked.")
+        if invitation["expires_at"] < now:
+            raise ValueError("Invitation has expired.")
+    return invitation
+
+
+def mark_invitation_accepted(invitation_id: int) -> dict[str, Any]:
+    """Mark a validated invitation as accepted."""
+    now = utcnow_iso()
+    with get_connection() as connection:
+        updated = connection.execute(
+            """
+            UPDATE invitations
+            SET status = 'accepted', accepted_at = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (now, invitation_id),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("Invitation has already been used or revoked.")
+
+        row = connection.execute(
+            """
+            SELECT id, email, role, status, actor, created_at, expires_at, accepted_at
+            FROM invitations
+            WHERE id = ?
+            """,
+            (invitation_id,),
+        ).fetchone()
+    if not row:
+        raise ValueError("Invitation not found.")
+    return dict(row)
+
+
+def accept_invitation(token: str) -> dict[str, Any]:
+    """Validate and mark an invitation as accepted. Returns the updated record."""
+    invitation = validate_invitation(token)
+    return mark_invitation_accepted(int(invitation["id"]))
+
+
+# --- Billing / Subscription ---
+
+
+def update_user_plan(
+    user_id: str, *, plan_tier: str, stripe_customer_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        if stripe_customer_id is not None:
+            connection.execute(
+                "UPDATE users SET plan_tier = ?, stripe_customer_id = ?, updated_at = ? WHERE id = ?",
+                (plan_tier, stripe_customer_id, now, user_id),
+            )
+        else:
+            connection.execute(
+                "UPDATE users SET plan_tier = ?, updated_at = ? WHERE id = ?",
+                (plan_tier, now, user_id),
+            )
+        row = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, plan_tier, stripe_customer_id,
+                   last_login_at, created_at, updated_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_stripe_customer(stripe_customer_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, email, full_name, role, status, plan_tier, stripe_customer_id,
+                   last_login_at, created_at, updated_at
+            FROM users
+            WHERE stripe_customer_id = ?
+            """,
+            (stripe_customer_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_subscription(
+    *,
+    user_id: str,
+    plan_tier: str,
+    billing_type: str,
+    stripe_subscription_id: Optional[str] = None,
+    stripe_customer_id: Optional[str] = None,
+    status: str = "active",
+    current_period_start: Optional[str] = None,
+    current_period_end: Optional[str] = None,
+) -> dict[str, Any]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO subscriptions
+                (user_id, plan_tier, billing_type, stripe_subscription_id, stripe_customer_id,
+                 status, current_period_start, current_period_end, canceled_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                user_id,
+                plan_tier,
+                billing_type,
+                stripe_subscription_id,
+                stripe_customer_id,
+                status,
+                current_period_start,
+                current_period_end,
+                now,
+                now,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM subscriptions WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_active_subscription(user_id: str) -> Optional[dict[str, Any]]:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM subscriptions
+            WHERE user_id = ? AND status IN ('active', 'past_due')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_subscription_status(
+    stripe_subscription_id: str,
+    *,
+    status: str,
+    current_period_end: Optional[str] = None,
+    canceled_at: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE subscriptions
+            SET status = ?, current_period_end = COALESCE(?, current_period_end),
+                canceled_at = COALESCE(?, canceled_at), updated_at = ?
+            WHERE stripe_subscription_id = ?
+            """,
+            (status, current_period_end, canceled_at, now, stripe_subscription_id),
+        )
+        row = connection.execute(
+            "SELECT * FROM subscriptions WHERE stripe_subscription_id = ?",
+            (stripe_subscription_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_payment_event(
+    *,
+    user_id: Optional[str],
+    stripe_event_id: str,
+    event_type: str,
+    amount_cents: Optional[int] = None,
+    currency: str = "usd",
+    plan_tier: Optional[str] = None,
+    billing_type: Optional[str] = None,
+    raw_payload: Optional[str] = None,
+) -> dict[str, Any]:
+    now = utcnow_iso()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO payment_events
+                (user_id, stripe_event_id, event_type, amount_cents, currency,
+                 plan_tier, billing_type, raw_payload, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                stripe_event_id,
+                event_type,
+                amount_cents,
+                currency,
+                plan_tier,
+                billing_type,
+                raw_payload,
+                now,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM payment_events WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return dict(row)
+
+
+def count_user_documents_this_month(user_id: Optional[str] = None) -> int:
+    """Count documents created in the current calendar month (for plan limits)."""
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS total FROM documents WHERE created_at >= ?",
+            (month_start,),
+        ).fetchone()
+    return int(row["total"]) if row else 0

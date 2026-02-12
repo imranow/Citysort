@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CitySort AI — Document Intelligence for Local Government</title>
+  <meta name="description" content="AI-powered document classification, routing, and compliance for city and county government offices." />
+  <link rel="stylesheet" href="/static/landing.css?v=0" />
+  <script>
+    (function(){
+      var saved = localStorage.getItem("citysort_theme");
+      if (saved) { document.documentElement.setAttribute("data-theme", saved); }
+      else {
+        var h = new Date().getHours();
+        document.documentElement.setAttribute("data-theme", (h >= 19 || h < 7) ? "dark" : "light");
+      }
+    })();
+  </script>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="M8 7h8M8 11h5M8 15h8"/></svg>
+      CitySort AI
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+    </ul>
+    <div class="nav-actions">
+      <button id="theme-toggle" class="btn btn-ghost btn-sm" title="Toggle theme" aria-label="Toggle theme">&#127769;</button>
+      <button class="btn btn-ghost btn-sm" data-action="open-login">Log In</button>
+      <button class="btn btn-primary btn-sm" data-action="open-signup">Get Started</button>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <h1>AI-Powered Document Intelligence for Local Government</h1>
+  <p>Automate document intake, classification, and routing. Reduce processing time by 80% with intelligent automation built for city and county offices.</p>
+  <div class="hero-actions">
+    <button class="btn btn-primary btn-lg" data-action="open-signup">Start Free</button>
+    <a href="#features" class="btn btn-outline btn-lg">See How It Works</a>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+  <h2>Built for Government Workflows</h2>
+  <p class="subtitle">Everything you need to modernize document processing in one platform.</p>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">&#129302;</div>
+      <h3>AI Document Classification</h3>
+      <p>Automatically identify building permits, business licenses, FOIA requests, complaints, and more using Claude or GPT models.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128268;</div>
+      <h3>Smart Routing &amp; Queues</h3>
+      <p>Route documents to the right department instantly. SLA tracking, priority queues, and automated assignment keep work flowing.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128640;</div>
+      <h3>10+ Data Connectors</h3>
+      <p>Import from ServiceNow, Salesforce, Jira, SharePoint, S3, GCS, databases, and watched folders. Bring your data where it's needed.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">&#128737;</div>
+      <h3>Compliance &amp; Audit Trail</h3>
+      <p>Every action is logged. Full audit trail, role-based access, encryption at rest, and configurable retention policies.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing">
+  <div class="pricing-inner">
+    <h2>Simple, Transparent Pricing</h2>
+    <p class="subtitle">Start free, upgrade when you need more. No hidden fees.</p>
+    <div class="pricing-toggle">
+      <button id="toggle-monthly" class="active">Monthly</button>
+      <button id="toggle-lifetime">Lifetime</button>
+    </div>
+    <div class="pricing-grid">
+      <!-- Free -->
+      <div class="pricing-card">
+        <h3>Free</h3>
+        <div class="pricing-price" data-monthly-price="$0" data-lifetime-price="$0">$0</div>
+        <div class="pricing-period" data-monthly-period="forever" data-lifetime-period="forever">forever</div>
+        <ul class="pricing-features">
+          <li>50 documents/month</li>
+          <li>Rules-based classification</li>
+          <li>1 user</li>
+          <li>30-day audit retention</li>
+        </ul>
+        <button class="btn btn-outline" data-plan="free">Get Started</button>
+      </div>
+      <!-- Pro -->
+      <div class="pricing-card popular">
+        <span class="badge">Most Popular</span>
+        <h3>Pro</h3>
+        <div class="pricing-price" data-monthly-price="$29" data-lifetime-price="$299">$29</div>
+        <div class="pricing-period" data-monthly-period="/month" data-lifetime-period="one-time">/month</div>
+        <ul class="pricing-features">
+          <li>5,000 documents/month</li>
+          <li>AI classification (Claude &amp; GPT)</li>
+          <li>All 10 connectors</li>
+          <li>5 users</li>
+          <li>Email notifications</li>
+          <li>API access</li>
+          <li>1-year audit retention</li>
+        </ul>
+        <button class="btn btn-primary" data-plan="pro">Upgrade to Pro</button>
+      </div>
+      <!-- Enterprise -->
+      <div class="pricing-card">
+        <h3>Enterprise</h3>
+        <div class="pricing-price" data-monthly-price="$99" data-lifetime-price="$999">$99</div>
+        <div class="pricing-period" data-monthly-period="/month" data-lifetime-period="one-time">/month</div>
+        <ul class="pricing-features">
+          <li>Unlimited documents</li>
+          <li>AI classification (Claude &amp; GPT)</li>
+          <li>All 10 connectors</li>
+          <li>Unlimited users</li>
+          <li>Email notifications</li>
+          <li>API access</li>
+          <li>7-year audit retention</li>
+          <li>Dedicated SLA support</li>
+        </ul>
+        <button class="btn btn-outline" data-plan="enterprise">Contact Sales</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-brand">&copy; 2025 CitySort AI. All rights reserved.</div>
+    <ul class="footer-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="mailto:support@citysort.ai">Contact</a></li>
+    </ul>
+  </div>
+</footer>
+
+<!-- Login Modal -->
+<div id="login-modal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" aria-label="Close">&times;</button>
+    <h2>Welcome Back</h2>
+    <p>Sign in to your CitySort AI account.</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" name="email" placeholder="you@city.gov" required autocomplete="email" />
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" name="password" placeholder="Your password" required autocomplete="current-password" />
+      </div>
+      <div id="login-error" class="form-error"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">Sign In</button>
+      <div class="form-footer">
+        Have an invite? <a href="#" data-action="switch-to-signup">Create an account</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Signup Modal -->
+<div id="signup-modal" class="modal-overlay">
+  <div class="modal">
+    <button class="modal-close" aria-label="Close">&times;</button>
+    <h2>Create Your Account</h2>
+    <p>Enter your invitation token to get started.</p>
+    <form id="signup-form">
+      <div class="form-group">
+        <label for="signup-token">Invitation Token</label>
+        <input type="text" id="signup-token" name="invitation_token" placeholder="Paste your invite token" required />
+      </div>
+      <div class="form-group">
+        <label for="signup-name">Full Name</label>
+        <input type="text" id="signup-name" name="full_name" placeholder="Jane Doe" autocomplete="name" />
+      </div>
+      <div class="form-group">
+        <label for="signup-email">Email</label>
+        <input type="email" id="signup-email" name="email" placeholder="you@city.gov" required autocomplete="email" />
+      </div>
+      <div class="form-group">
+        <label for="signup-password">Password</label>
+        <input type="password" id="signup-password" name="password" placeholder="Min 8 characters" required minlength="8" autocomplete="new-password" />
+      </div>
+      <div id="signup-error" class="form-error"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">Create Account</button>
+      <div class="form-footer">
+        Already have an account? <a href="#" data-action="switch-to-login">Sign in</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/static/landing.js?v=0"></script>
+</body>
+</html>

@@ -12,3 +12,4 @@ cryptography==44.0.1
 prometheus-client==0.21.1
 sentry-sdk==2.22.0
 redis==5.2.1
+stripe==11.4.1

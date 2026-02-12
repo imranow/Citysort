@@ -776,6 +776,9 @@ h1 {
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
+  position: relative;
+  z-index: 3;
+  pointer-events: auto;
 }
 
 .shell-tabs::-webkit-scrollbar {
@@ -790,6 +793,9 @@ h1 {
   padding: 0.6875rem 1rem;
   border-bottom: 2px solid transparent;
   transition: color 140ms ease, border-color 140ms ease;
+  position: relative;
+  z-index: 4;
+  pointer-events: auto;
 }
 
 .tab:hover {
@@ -809,6 +815,8 @@ h1 {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 1rem;
+  position: relative;
+  z-index: 1;
 }
 
 /* ── Panels ──────────────────────────────────────── */

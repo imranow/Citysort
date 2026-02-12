@@ -269,6 +269,7 @@ class UserRecord(BaseModel):
     full_name: Optional[str] = None
     role: str
     status: str
+    plan_tier: str = "free"
     last_login_at: Optional[str] = None
     created_at: str
     updated_at: str
@@ -490,3 +491,63 @@ class ConnectorImportResponse(BaseModel):
     failed_count: int
     documents: list[ConnectorImportDocument] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+# --- Auth Signup ---
+
+
+class AuthSignupRequest(BaseModel):
+    email: str
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: Optional[str] = None
+    invitation_token: str
+
+
+# --- Billing / Stripe ---
+
+
+class CheckoutRequest(BaseModel):
+    plan_tier: str  # pro | enterprise
+    billing_type: str  # monthly | lifetime
+
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
+
+
+class PortalResponse(BaseModel):
+    portal_url: str
+
+
+class SubscriptionRecord(BaseModel):
+    id: int
+    user_id: str
+    plan_tier: str
+    billing_type: str
+    stripe_subscription_id: Optional[str] = None
+    status: str
+    current_period_start: Optional[str] = None
+    current_period_end: Optional[str] = None
+    canceled_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class SubscriptionResponse(BaseModel):
+    plan_tier: str
+    billing_type: Optional[str] = None
+    status: str
+    current_period_end: Optional[str] = None
+    stripe_enabled: bool = False
+
+
+class PlanInfo(BaseModel):
+    name: str
+    monthly_price_cents: int
+    lifetime_price_cents: int
+    document_limit: Optional[int] = None
+    features: list[str] = Field(default_factory=list)
+
+
+class PlansResponse(BaseModel):
+    plans: list[PlanInfo] = Field(default_factory=list)

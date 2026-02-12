@@ -15,6 +15,7 @@ const lastUpdated = document.getElementById("last-updated");
 const docsButton = document.getElementById("docs-btn");
 const inviteButton = document.getElementById("invite-btn");
 const newKeyButton = document.getElementById("new-key-btn");
+const logoutButton = document.getElementById("logout-btn");
 const connectButton = document.getElementById("connect-btn");
 const deployButton = document.getElementById("deploy-btn");
 
@@ -119,6 +120,7 @@ const responseCopyBtn = document.getElementById("response-copy-btn");
 const responseSendBtn = document.getElementById("response-send-btn");
 const AUTH_TOKEN_KEY = "citysort_access_token";
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
+let authRedirectInProgress = false;
 
 let selectedDocumentId = "";
 let activeRules = {};
@@ -131,6 +133,7 @@ const bulkSelected = new Set();
 let templateCache = [];
 let notificationsPollHandle = null;
 let classifierInfo = { classifier_provider: "rules" };
+let platformSummaryRetryHandle = null;
 
 const TRANSITIONS = {
   ingested: ["needs_review", "routed"],
@@ -146,6 +149,33 @@ const TRANSITIONS = {
 };
 
 const OVERDUE_DONE_STATUSES = new Set(["approved", "corrected", "completed", "archived"]);
+const PAGE_CONFIG = {
+  overview: {
+    title: "Overview",
+    subtitle: "Operational snapshot across ingestion, queue health, review workload, and routing outcomes.",
+  },
+  upload: {
+    title: "Ingestion",
+    subtitle: "Upload and process document batches while monitoring throughput and confidence in real time.",
+  },
+  queues: {
+    title: "Document Review",
+    subtitle: "Review, approve, and route documents across department queues.",
+  },
+  connectors: {
+    title: "Connectors",
+    subtitle: "Connect databases and SaaS platforms to ingest documents into the CitySort pipeline.",
+  },
+  rules: {
+    title: "Routing Rules",
+    subtitle: "Manage classification policy, required fields, and department routing behavior for new intake.",
+  },
+};
+const PAGE_ALIASES = {
+  review: "queues",
+  "db-import": "connectors",
+};
+let activeDashboardPage = "overview";
 
 const toastContainer = document.getElementById("toast-container");
 const toastIcons = {
@@ -154,6 +184,110 @@ const toastIcons = {
   warning: '<path d="M8 2L1.5 13.5h13L8 2z"/><path d="M8 7v3M8 11.5v.5"/>',
   info: '<circle cx="8" cy="8" r="6.5"/><path d="M8 7v4M8 5v.5"/>',
 };
+
+function resolvePageFromLocation() {
+  const searchParams = new URLSearchParams(window.location.search);
+  const raw = String(searchParams.get("page") || "overview").trim().toLowerCase();
+  const aliased = PAGE_ALIASES[raw] || raw;
+  const normalized = Object.prototype.hasOwnProperty.call(PAGE_CONFIG, aliased)
+    ? aliased
+    : "overview";
+  return { raw, normalized };
+}
+
+function writePageToLocation(page, mode) {
+  const searchParams = new URLSearchParams(window.location.search);
+  searchParams.set("page", page);
+  if (page !== "queues") {
+    searchParams.delete("doc");
+  }
+  const nextQuery = searchParams.toString();
+  const nextUrl = nextQuery ? `/app?${nextQuery}` : "/app";
+  if (mode === "replace") {
+    window.history.replaceState(null, "", nextUrl);
+  } else if (mode === "push") {
+    window.history.pushState(null, "", nextUrl);
+  }
+}
+
+function applyDashboardPage(page, options = {}) {
+  const { updateUrlMode = null } = options;
+  const normalized = Object.prototype.hasOwnProperty.call(PAGE_CONFIG, page)
+    ? page
+    : "overview";
+  activeDashboardPage = normalized;
+  const meta = PAGE_CONFIG[normalized];
+
+  const titleEl = document.querySelector(".shell-topbar h1");
+  if (titleEl) {
+    titleEl.textContent = meta.title;
+  }
+  const subtitleEl = document.querySelector(".shell-topbar .subtitle");
+  if (subtitleEl) {
+    subtitleEl.textContent = meta.subtitle;
+  }
+  const breadcrumbEl = document.getElementById("breadcrumb-current");
+  if (breadcrumbEl) {
+    breadcrumbEl.textContent = meta.title;
+  }
+
+  document.querySelectorAll(".sidebar-link[data-page], .tab[data-page]").forEach((link) => {
+    const isActive = String(link.dataset.page || "") === normalized;
+    link.classList.toggle("active", isActive);
+    if (isActive) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  });
+
+  document.querySelectorAll(".panel[data-pages]").forEach((panel) => {
+    const pages = String(panel.dataset.pages || "")
+      .split(/\s+/)
+      .filter(Boolean);
+    panel.classList.toggle("is-page-hidden", !pages.includes(normalized));
+  });
+
+  if (updateUrlMode) {
+    writePageToLocation(normalized, updateUrlMode);
+  }
+}
+
+function bindPageRouting() {
+  const { raw, normalized } = resolvePageFromLocation();
+  const needsUrlReplace = raw !== normalized;
+  applyDashboardPage(normalized, { updateUrlMode: needsUrlReplace ? "replace" : null });
+
+  document.querySelectorAll(".sidebar-link[data-page], .tab[data-page]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (
+        event.defaultPrevented
+        || event.button !== 0
+        || event.metaKey
+        || event.ctrlKey
+        || event.shiftKey
+        || event.altKey
+      ) {
+        return;
+      }
+      const page = String(link.dataset.page || "").trim().toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(PAGE_CONFIG, page)) {
+        return;
+      }
+      event.preventDefault();
+      if (page === activeDashboardPage) {
+        return;
+      }
+      applyDashboardPage(page, { updateUrlMode: "push" });
+      window.scrollTo({ top: 0, behavior: "auto" });
+    });
+  });
+
+  window.addEventListener("popstate", () => {
+    const resolved = resolvePageFromLocation();
+    applyDashboardPage(resolved.normalized);
+  });
+}
 
 function showToast(message, type, duration) {
   if (type === undefined) type = "info";
@@ -419,28 +553,20 @@ function setAuthToken(token) {
 }
 
 async function promptLogin() {
-  const email = window.prompt("Sign in email:");
-  if (!email) return false;
-  const password = window.prompt("Password:");
-  if (!password) return false;
-
-  try {
-    const loginData = await parseJSON(
-      await window.fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      }),
-    );
-    setAuthToken(loginData.access_token);
-    currentUserId = String(loginData.user?.id || "");
-    currentUserEmail = String(loginData.user?.email || "");
-    setPlatformStatus(`Signed in as ${loginData.user.email}.`);
-    return true;
-  } catch (error) {
-    setPlatformStatus(`Login failed: ${error.message}`, true);
+  // Clear stale/invalid tokens before redirecting to avoid redirect loops.
+  setAuthToken("");
+  if (authRedirectInProgress) {
     return false;
   }
+  authRedirectInProgress = true;
+  // Redirect to the landing page for login instead of using window.prompt.
+  window.location.href = "/?login=1";
+  return false;
+}
+
+function logout() {
+  setAuthToken("");
+  window.location.href = "/?logout=1";
 }
 
 async function apiFetch(input, init = {}, options = {}) {
@@ -1519,16 +1645,26 @@ async function loadDocuments() {
     params.set("assigned_to", currentUserId);
   }
 
-  const listResponsePromise = apiFetch(`/api/documents?${params.toString()}`);
-  const summaryResponsePromise = reviewSummaryBody ? apiFetch("/api/documents?limit=200") : null;
+  const hasSearchFilter = Boolean(filterSearch && filterSearch.value.trim());
+  const hasStatusFilter = Boolean(filterStatus && filterStatus.value);
+  const hasDepartmentFilter = Boolean(activeDepartmentFilter);
+  const hasAssigneeFilter = Boolean(myDocsChip && myDocsChip.classList.contains("active") && currentUserId);
+  const needsIndependentSummary = Boolean(
+    reviewSummaryBody
+      && (hasSearchFilter || hasStatusFilter || hasDepartmentFilter || hasAssigneeFilter),
+  );
 
-  const listData = await parseJSON(await listResponsePromise);
+  const listData = await parseJSON(await apiFetch(`/api/documents?${params.toString()}`));
   let items = listData.items || [];
   let summaryItems = [];
 
-  if (summaryResponsePromise) {
-    const summaryData = await parseJSON(await summaryResponsePromise);
-    summaryItems = summaryData.items || [];
+  if (reviewSummaryBody) {
+    if (needsIndependentSummary) {
+      const summaryData = await parseJSON(await apiFetch("/api/documents?limit=200"));
+      summaryItems = summaryData.items || [];
+    } else {
+      summaryItems = listData.items || [];
+    }
   }
 
   // Client-side pseudo-filters: urgent, unassigned
@@ -1779,6 +1915,15 @@ async function loadAll() {
     reviewListScroll.innerHTML = skeletonHtml;
   }
   await Promise.all([loadAnalytics(), loadQueues(), loadDocuments(), loadWatcherStatus(), loadClassifierInfo(), loadActivityFeed()]);
+  if (uploadStatus) {
+    const currentStatus = String(uploadStatus.textContent || "");
+    if (
+      currentStatus.startsWith("Failed to load dashboard:")
+      || currentStatus.startsWith("Refresh failed:")
+    ) {
+      uploadStatus.textContent = "";
+    }
+  }
   if (lastUpdated) {
     lastUpdated.textContent = `Updated: ${formatUpdatedAt()}`;
   }
@@ -1787,12 +1932,22 @@ async function loadAll() {
 async function loadPlatformSummary() {
   try {
     const data = await parseJSON(await apiFetch("/api/platform/summary"));
+    if (platformSummaryRetryHandle) {
+      window.clearTimeout(platformSummaryRetryHandle);
+      platformSummaryRetryHandle = null;
+    }
     const latestDeploy = data.latest_deployment ? `Last deploy: ${data.latest_deployment.status}` : "No deploys yet";
     setPlatformStatus(
       `${connectivitySummary(data.connectivity)} | Active keys: ${data.active_api_keys} | Pending invites: ${data.pending_invitations} | ${latestDeploy}`,
     );
   } catch (error) {
     setPlatformStatus(`Platform summary failed: ${error.message}`, true);
+    if (!platformSummaryRetryHandle && /rate limit/i.test(String(error.message || ""))) {
+      platformSummaryRetryHandle = window.setTimeout(() => {
+        platformSummaryRetryHandle = null;
+        loadPlatformSummary().catch(() => {});
+      }, 5000);
+    }
   }
 }
 
@@ -1851,7 +2006,7 @@ function bindDocumentClicks() {
       const row = event.target.closest(".review-summary-row");
       if (!row) return;
       const docId = row.dataset.docId;
-      window.location.href = `/?page=queues&doc=${encodeURIComponent(docId)}`;
+      window.location.href = `/app?page=queues&doc=${encodeURIComponent(docId)}`;
     });
   }
 }
@@ -2622,7 +2777,7 @@ function bindAdvancedActions() {
       }
       if (notificationPanel) notificationPanel.hidden = true;
       if (documentId) {
-        window.location.href = `/?page=queues&doc=${encodeURIComponent(documentId)}`;
+        window.location.href = `/app?page=queues&doc=${encodeURIComponent(documentId)}`;
       }
     });
   }
@@ -2814,6 +2969,12 @@ function bindPlatformActions() {
       } finally {
         setButtonBusy(newKeyButton, "Creating...", false);
       }
+    });
+  }
+
+  if (logoutButton) {
+    logoutButton.addEventListener("click", () => {
+      logout();
     });
   }
 }
@@ -3075,6 +3236,7 @@ if (sidebarToggle) {
 }
 
 bindFilters();
+bindPageRouting();
 bindDocumentClicks();
 bindConnectors();
 bindRulesActions();

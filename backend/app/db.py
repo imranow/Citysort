@@ -9,6 +9,8 @@ from typing import Any, Iterator
 from urllib.parse import unquote
 
 from .config import (
+    APPROVED_EXPORT_DIR,
+    APPROVED_EXPORT_ENABLED,
     DATABASE_BACKEND,
     DATABASE_CONNECT_TIMEOUT_SECONDS,
     DATABASE_PATH,
@@ -23,6 +25,8 @@ def ensure_directories() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    if APPROVED_EXPORT_ENABLED:
+        APPROVED_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _sqlite_target_path() -> str:
@@ -287,6 +291,8 @@ def _create_tables(connection: ConnectionAdapter) -> None:
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
+            plan_tier TEXT NOT NULL DEFAULT 'free',
+            stripe_customer_id TEXT,
             last_login_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -389,6 +395,43 @@ def _create_tables(connection: ConnectionAdapter) -> None:
 
     connection.execute(
         f"""
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id {auto_id},
+            user_id TEXT NOT NULL,
+            plan_tier TEXT NOT NULL DEFAULT 'free',
+            billing_type TEXT NOT NULL DEFAULT 'monthly',
+            stripe_subscription_id TEXT,
+            stripe_customer_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            current_period_start TEXT,
+            current_period_end TEXT,
+            canceled_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS payment_events (
+            id {auto_id},
+            user_id TEXT,
+            stripe_event_id TEXT UNIQUE,
+            event_type TEXT NOT NULL,
+            amount_cents INTEGER,
+            currency TEXT DEFAULT 'usd',
+            plan_tier TEXT,
+            billing_type TEXT,
+            raw_payload TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    connection.execute(
+        f"""
         CREATE TABLE IF NOT EXISTS connector_sync_log (
             id {auto_id},
             connector_type TEXT NOT NULL,
@@ -452,6 +495,18 @@ def _create_tables(connection: ConnectionAdapter) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_connector_sync_type_ext ON connector_sync_log (connector_type, external_id)"
     )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions (user_id, status)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_sub ON subscriptions (stripe_subscription_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payment_events_user ON payment_events (user_id, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payment_events_stripe_event ON payment_events (stripe_event_id)"
+    )
 
     # Idempotent seed templates.
     template_count_row = connection.execute(
@@ -498,6 +553,17 @@ def _run_safe_migrations(connection: ConnectionAdapter) -> None:
         )
     if "external_id" not in deployment_columns:
         connection.execute("ALTER TABLE deployments ADD COLUMN external_id TEXT")
+
+    user_columns = _table_columns(connection, "users")
+    if "plan_tier" not in user_columns:
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN plan_tier TEXT NOT NULL DEFAULT 'free'"
+        )
+    if "stripe_customer_id" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN stripe_customer_id TEXT")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users (stripe_customer_id)"
+    )
 
     document_columns = _table_columns(connection, "documents")
     if "due_date" not in document_columns:
