@@ -1884,3 +1884,181 @@ def update_user_email_preferences(
             (json.dumps(merged), now, user_id),
         )
     return merged
+
+
+# ── Workflow Rules ───────────────────────────────────────────────────
+
+
+def _deserialize_workflow_rule(row: Any) -> dict[str, Any]:
+    record = dict(row)
+    record["enabled"] = bool(record.get("enabled", 1))
+    filters_raw = record.pop("filters_json", "") if "filters_json" in record else ""
+    actions_raw = record.pop("actions_json", "") if "actions_json" in record else ""
+    try:
+        filters = json.loads(filters_raw) if filters_raw else {}
+    except Exception:
+        filters = {}
+    try:
+        actions = json.loads(actions_raw) if actions_raw else []
+    except Exception:
+        actions = []
+    record["filters"] = filters if isinstance(filters, dict) else {}
+    record["actions"] = actions if isinstance(actions, list) else []
+    return record
+
+
+def list_workflow_rules(
+    *,
+    workspace_id: Optional[str] = None,
+    trigger_event: Optional[str] = None,
+    enabled_only: bool = False,
+    include_global: bool = True,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    query = "SELECT * FROM workflow_rules"
+    conditions: list[str] = []
+    params: list[Any] = []
+    if workspace_id is None:
+        conditions.append("workspace_id IS NULL")
+    elif include_global:
+        conditions.append("(workspace_id = ? OR workspace_id IS NULL)")
+        params.append(workspace_id)
+    else:
+        conditions.append("workspace_id = ?")
+        params.append(workspace_id)
+    if trigger_event:
+        conditions.append("trigger_event = ?")
+        params.append(trigger_event)
+    if enabled_only:
+        conditions.append("enabled = 1")
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY id ASC LIMIT ?"
+    params.append(limit)
+    with get_connection() as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [_deserialize_workflow_rule(row) for row in rows]
+
+
+def get_workflow_rule(
+    rule_id: int, *, workspace_id: Optional[str] = None, include_global: bool = True
+) -> Optional[dict[str, Any]]:
+    conditions = ["id = ?"]
+    params: list[Any] = [rule_id]
+    if workspace_id is None:
+        conditions.append("workspace_id IS NULL")
+    elif include_global:
+        conditions.append("(workspace_id = ? OR workspace_id IS NULL)")
+        params.append(workspace_id)
+    else:
+        conditions.append("workspace_id = ?")
+        params.append(workspace_id)
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT * FROM workflow_rules WHERE {' AND '.join(conditions)}",
+            params,
+        ).fetchone()
+    return _deserialize_workflow_rule(row) if row else None
+
+
+def create_workflow_rule(
+    *,
+    workspace_id: Optional[str],
+    name: str,
+    trigger_event: str,
+    filters: Optional[dict[str, Any]] = None,
+    actions: Optional[list[dict[str, Any]]] = None,
+    enabled: bool = True,
+) -> dict[str, Any]:
+    now = utcnow_iso()
+    filters_json = json.dumps(filters or {}, separators=(",", ":"), ensure_ascii=True)
+    actions_json = json.dumps(actions or [], separators=(",", ":"), ensure_ascii=True)
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO workflow_rules (workspace_id, name, enabled, trigger_event, filters_json, actions_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                workspace_id,
+                name,
+                1 if enabled else 0,
+                trigger_event,
+                filters_json,
+                actions_json,
+                now,
+                now,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM workflow_rules WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    if not row:
+        raise RuntimeError("Failed to create workflow rule.")
+    return _deserialize_workflow_rule(row)
+
+
+def update_workflow_rule(
+    rule_id: int,
+    *,
+    workspace_id: Optional[str],
+    name: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    trigger_event: Optional[str] = None,
+    filters: Optional[dict[str, Any]] = None,
+    actions: Optional[list[dict[str, Any]]] = None,
+) -> Optional[dict[str, Any]]:
+    updates: dict[str, Any] = {}
+    if name is not None:
+        updates["name"] = name
+    if enabled is not None:
+        updates["enabled"] = 1 if enabled else 0
+    if trigger_event is not None:
+        updates["trigger_event"] = trigger_event
+    if filters is not None:
+        updates["filters_json"] = json.dumps(
+            filters, separators=(",", ":"), ensure_ascii=True
+        )
+    if actions is not None:
+        updates["actions_json"] = json.dumps(
+            actions, separators=(",", ":"), ensure_ascii=True
+        )
+    if not updates:
+        return get_workflow_rule(
+            rule_id, workspace_id=workspace_id, include_global=False
+        )
+    updates["updated_at"] = utcnow_iso()
+    assignments = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [rule_id]
+    where = "id = ?"
+    if workspace_id is None:
+        where += " AND workspace_id IS NULL"
+    else:
+        where += " AND workspace_id = ?"
+        params.append(workspace_id)
+    with get_connection() as connection:
+        cursor = connection.execute(
+            f"UPDATE workflow_rules SET {assignments} WHERE {where}",
+            params,
+        )
+        if int(cursor.rowcount) == 0:
+            return None
+        row = connection.execute(
+            f"SELECT * FROM workflow_rules WHERE {where}",
+            [rule_id, *(params[-1:] if workspace_id is not None else [])],
+        ).fetchone()
+    return _deserialize_workflow_rule(row) if row else None
+
+
+def delete_workflow_rule(rule_id: int, *, workspace_id: Optional[str]) -> bool:
+    query = "DELETE FROM workflow_rules WHERE id = ?"
+    params: list[Any] = [rule_id]
+    if workspace_id is None:
+        query += " AND workspace_id IS NULL"
+    else:
+        query += " AND workspace_id = ?"
+        params.append(workspace_id)
+    with get_connection() as connection:
+        cursor = connection.execute(query, params)
+    return int(cursor.rowcount) > 0

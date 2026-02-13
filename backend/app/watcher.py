@@ -142,6 +142,17 @@ class FolderWatcher:
             actor="folder_watcher",
             details=f"source={file_path}",
         )
+        try:
+            from .workflows import run_workflows_for_document
+
+            run_workflows_for_document(
+                trigger_event="document_ingested",
+                document_id=document_id,
+                actor="folder_watcher",
+                workspace_id=None,
+            )
+        except Exception:
+            pass
         enqueue_document_processing(document_id=document_id, actor="folder_watcher")
         logger.info("Watcher ingested: %s -> %s", file_path.name, document_id)
 

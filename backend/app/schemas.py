@@ -268,6 +268,7 @@ class AuthLoginRequest(BaseModel):
 class UserRecord(BaseModel):
     id: str
     workspace_id: Optional[str] = None
+    workspace_role: Optional[str] = None
     email: str
     full_name: Optional[str] = None
     role: str
@@ -394,6 +395,62 @@ class NotificationRecord(BaseModel):
 class NotificationListResponse(BaseModel):
     items: list[NotificationRecord] = Field(default_factory=list)
     unread_count: int = 0
+
+
+# --- Workflow Automations ---
+
+
+class WorkflowRuleRecord(BaseModel):
+    id: int
+    workspace_id: Optional[str] = None
+    name: str
+    enabled: bool = True
+    trigger_event: str
+    filters: dict[str, Any] = Field(default_factory=dict)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class WorkflowRuleCreateRequest(BaseModel):
+    name: str
+    enabled: bool = True
+    trigger_event: str
+    filters: dict[str, Any] = Field(default_factory=dict)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowRuleUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    enabled: Optional[bool] = None
+    trigger_event: Optional[str] = None
+    filters: Optional[dict[str, Any]] = None
+    actions: Optional[list[dict[str, Any]]] = None
+
+
+class WorkflowRuleListResponse(BaseModel):
+    items: list[WorkflowRuleRecord] = Field(default_factory=list)
+
+
+class WorkflowPresetRecord(BaseModel):
+    id: str
+    name: str
+    category: str
+    description: str
+    rules_count: int = 0
+    templates_count: int = 0
+
+
+class WorkflowPresetListResponse(BaseModel):
+    items: list[WorkflowPresetRecord] = Field(default_factory=list)
+
+
+class WorkflowPresetApplyResponse(BaseModel):
+    preset_id: str
+    created_rules: list[WorkflowRuleRecord] = Field(default_factory=list)
+    created_templates: list[TemplateRecord] = Field(default_factory=list)
+    skipped_rules: int = 0
+    skipped_templates: int = 0
 
 
 # --- Workflow Transitions ---

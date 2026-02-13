@@ -98,13 +98,16 @@ from .repository import (
     create_document,
     create_outbound_email,
     create_invitation,
+    create_workflow_rule,
     create_workspace,
+    delete_workflow_rule,
     get_latest_deployment,
     get_analytics_snapshot,
     get_document,
     get_default_workspace_for_user,
     get_queue_snapshot,
     get_workspace,
+    get_workflow_rule,
     list_user_workspaces,
     list_workspace_members,
     list_api_keys,
@@ -114,6 +117,7 @@ from .repository import (
     list_invitations,
     list_unassigned_manual_documents,
     list_overdue_documents,
+    list_workflow_rules,
     revoke_api_key,
     get_active_subscription,
     mark_invitation_accepted,
@@ -124,6 +128,7 @@ from .repository import (
     update_workspace,
     get_user_email_preferences,
     update_user_email_preferences,
+    update_workflow_rule,
 )
 from .notifications import (
     count_unread,
@@ -149,6 +154,7 @@ from .stripe_billing import (
     get_plan_info,
     handle_webhook_event,
 )
+from .workflow_presets import apply_workflow_preset, list_workflow_presets
 from .watcher import start_watcher, stop_watcher
 from .security import (
     SlidingWindowRateLimiter,
@@ -229,6 +235,13 @@ from .schemas import (
     TemplateRenderResponse,
     TemplateUpdateRequest,
     TransitionRequest,
+    WorkflowRuleCreateRequest,
+    WorkflowRuleListResponse,
+    WorkflowRuleRecord,
+    WorkflowRuleUpdateRequest,
+    WorkflowPresetApplyResponse,
+    WorkflowPresetListResponse,
+    WorkflowPresetRecord,
     AuthSignupRequest,
     CheckoutRequest,
     CheckoutResponse,
@@ -979,6 +992,8 @@ def auth_me(request: Request) -> UserRecord:
     active_workspace_id = _resolve_workspace_id(identity)
     if active_workspace_id:
         payload["workspace_id"] = active_workspace_id
+    if identity.get("workspace_role"):
+        payload["workspace_role"] = str(identity.get("workspace_role"))
     return UserRecord(**payload)
 
 
@@ -1188,6 +1203,117 @@ def switch_workspace(workspace_id: str, request: Request) -> WorkspaceSwitchResp
     )
 
 
+# --- Workflow automations ---
+
+
+@app.get("/api/workflows", response_model=WorkflowRuleListResponse)
+def list_workflows(request: Request) -> WorkflowRuleListResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    rows = list_workflow_rules(
+        workspace_id=workspace_id, include_global=False, limit=200
+    )
+    return WorkflowRuleListResponse(items=[WorkflowRuleRecord(**r) for r in rows])
+
+
+@app.get("/api/workflows/presets", response_model=WorkflowPresetListResponse)
+def list_workflow_presets_endpoint(request: Request) -> WorkflowPresetListResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    items = list_workflow_presets()
+    return WorkflowPresetListResponse(items=[WorkflowPresetRecord(**i) for i in items])
+
+
+@app.post(
+    "/api/workflows/presets/{preset_id}/apply",
+    response_model=WorkflowPresetApplyResponse,
+)
+def apply_workflow_preset_endpoint(
+    preset_id: str,
+    request: Request,
+    overwrite: bool = False,
+) -> WorkflowPresetApplyResponse:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    try:
+        result = apply_workflow_preset(
+            preset_id=preset_id, workspace_id=workspace_id, overwrite=overwrite
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return WorkflowPresetApplyResponse(
+        preset_id=str(result["preset_id"]),
+        created_rules=[WorkflowRuleRecord(**r) for r in result["created_rules"]],
+        created_templates=[TemplateRecord(**t) for t in result["created_templates"]],
+        skipped_rules=int(result.get("skipped_rules") or 0),
+        skipped_templates=int(result.get("skipped_templates") or 0),
+    )
+
+
+@app.get("/api/workflows/{rule_id}", response_model=WorkflowRuleRecord)
+def get_workflow(rule_id: int, request: Request) -> WorkflowRuleRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="member")
+    row = get_workflow_rule(rule_id, workspace_id=workspace_id, include_global=False)
+    if not row:
+        raise HTTPException(status_code=404, detail="Workflow rule not found.")
+    return WorkflowRuleRecord(**row)
+
+
+@app.post("/api/workflows", response_model=WorkflowRuleRecord)
+def create_workflow(
+    payload: WorkflowRuleCreateRequest, request: Request
+) -> WorkflowRuleRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    created = create_workflow_rule(
+        workspace_id=workspace_id,
+        name=payload.name,
+        enabled=payload.enabled,
+        trigger_event=payload.trigger_event,
+        filters=payload.filters,
+        actions=payload.actions,
+    )
+    return WorkflowRuleRecord(**created)
+
+
+@app.patch("/api/workflows/{rule_id}", response_model=WorkflowRuleRecord)
+def update_workflow(
+    rule_id: int, payload: WorkflowRuleUpdateRequest, request: Request
+) -> WorkflowRuleRecord:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    updated = update_workflow_rule(
+        rule_id,
+        workspace_id=workspace_id,
+        name=payload.name,
+        enabled=payload.enabled,
+        trigger_event=payload.trigger_event,
+        filters=payload.filters,
+        actions=payload.actions,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Workflow rule not found.")
+    return WorkflowRuleRecord(**updated)
+
+
+@app.delete("/api/workflows/{rule_id}")
+def delete_workflow(rule_id: int, request: Request) -> dict[str, bool]:
+    identity = _enforce(request, role="viewer", allow_api_key=False)
+    workspace_id = _require_workspace(identity)
+    _enforce_workspace_role(identity, workspace_id, required_role="admin")
+    deleted = delete_workflow_rule(rule_id, workspace_id=workspace_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Workflow rule not found.")
+    return {"deleted": True}
+
+
 # --- Billing / Stripe ---
 
 
@@ -1357,6 +1483,19 @@ async def upload_document(
         details=f"source_channel={source_channel} file={file.filename}",
         workspace_id=workspace_id,
     )
+
+    # Workflow automations (never block upload).
+    try:
+        from .workflows import run_workflows_for_document
+
+        run_workflows_for_document(
+            trigger_event="document_ingested",
+            document_id=document_id,
+            actor=actor,
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        pass
 
     if process_async:
         enqueue_document_processing(
@@ -2025,6 +2164,27 @@ def review_document(
         except Exception:
             logger.debug("Review complete email failed (non-blocking)", exc_info=True)
 
+    # Workflow automations (never block review).
+    try:
+        from .workflows import run_workflows
+
+        trigger = f"document_{str(updated.get('status') or '').strip().lower()}"
+        run_workflows(
+            trigger_event="document_reviewed",
+            document=updated,
+            actor=str(identity.get("actor", payload.actor)),
+            workspace_id=workspace_id,
+        )
+        if trigger:
+            run_workflows(
+                trigger_event=trigger,
+                document=updated,
+                actor=str(identity.get("actor", payload.actor)),
+                workspace_id=workspace_id,
+            )
+    except Exception:
+        pass
+
     return DocumentResponse(**updated)
 
 
@@ -2641,6 +2801,25 @@ def transition_document(
     except Exception:
         pass  # Never block transition on email failure.
 
+    # Workflow automations (never block transition).
+    try:
+        from .workflows import run_workflows
+
+        run_workflows(
+            trigger_event="document_status_changed",
+            document=updated,
+            actor=str(identity.get("actor", payload.actor)),
+            workspace_id=workspace_id,
+        )
+        run_workflows(
+            trigger_event=f"document_{payload.status}",
+            document=updated,
+            actor=str(identity.get("actor", payload.actor)),
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        pass
+
     return DocumentResponse(**updated)
 
 
@@ -2687,6 +2866,19 @@ def assign_document(
         send_assignment_notification(document_id, payload.user_id)
     except Exception:
         logger.debug("Assignment email failed (non-blocking)", exc_info=True)
+
+    # Workflow automations (never block assignment).
+    try:
+        from .workflows import run_workflows
+
+        run_workflows(
+            trigger_event="document_assigned",
+            document=updated,
+            actor=str(identity.get("actor", payload.actor)),
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        pass
 
     return DocumentResponse(**updated)
 

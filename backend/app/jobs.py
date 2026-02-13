@@ -139,6 +139,19 @@ def _run_overdue_sla_scan() -> None:
             user_id=str(assigned_to) if assigned_to else None,
             document_id=document_id,
         )
+        try:
+            from .workflows import run_workflows_for_document
+
+            run_workflows_for_document(
+                trigger_event="document_overdue",
+                document_id=document_id,
+                actor="system_sla",
+                workspace_id=str(document.get("workspace_id"))
+                if document.get("workspace_id")
+                else None,
+            )
+        except Exception:
+            pass
 
         # --- Escalation: auto-reassign if overdue beyond threshold ---
         if (

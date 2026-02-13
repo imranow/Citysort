@@ -206,6 +206,19 @@ def import_from_connector(
             workspace_id=workspace_id,
         )
 
+        # Workflow automations (never block connector import).
+        try:
+            from ..workflows import run_workflows_for_document
+
+            run_workflows_for_document(
+                trigger_event="document_ingested",
+                document_id=document_id,
+                actor=actor,
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            pass
+
         # 8. Enqueue processing
         if process_async:
             enqueue_document_processing(

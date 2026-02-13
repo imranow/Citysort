@@ -411,6 +411,23 @@ def _create_tables(connection: ConnectionAdapter) -> None:
 
     connection.execute(
         f"""
+        CREATE TABLE IF NOT EXISTS workflow_rules (
+            id {auto_id},
+            workspace_id TEXT,
+            name TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            trigger_event TEXT NOT NULL,
+            filters_json TEXT NOT NULL DEFAULT '{{}}',
+            actions_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+
+    connection.execute(
+        f"""
         CREATE TABLE IF NOT EXISTS outbound_emails (
             id {auto_id},
             workspace_id TEXT,
@@ -543,6 +560,9 @@ def _create_tables(connection: ConnectionAdapter) -> None:
     )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_outbound_emails_document_created ON outbound_emails (document_id, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_rules_workspace_trigger ON workflow_rules (workspace_id, enabled, trigger_event)"
     )
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_connector_configs_type ON connector_configs (connector_type)"

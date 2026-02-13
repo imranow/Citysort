@@ -32,7 +32,6 @@ const reviewDocType = document.getElementById("review-doc-type");
 const reviewDepartment = document.getElementById("review-department");
 const reviewAssignedTo = document.getElementById("review-assigned-to");
 const reviewNotes = document.getElementById("review-notes");
-const reviewFieldsJson = document.getElementById("review-fields-json");
 const connectorsGrid = document.getElementById("connectors-grid");
 const connectorConfig = document.getElementById("connector-config");
 const connectorBackBtn = document.getElementById("connector-back");
@@ -64,7 +63,6 @@ const reviewMissing = document.getElementById("review-missing");
 const reviewErrors = document.getElementById("review-errors");
 const reviewMissingSection = document.getElementById("review-missing-section");
 const reviewErrorsSection = document.getElementById("review-errors-section");
-const reviewAudit = document.getElementById("review-audit");
 const transitionActions = document.getElementById("transition-actions");
 const respondButton = document.getElementById("respond-btn");
 
@@ -76,6 +74,7 @@ const docDownloadBtn = document.getElementById("doc-download-btn");
 const docReuploadInput = document.getElementById("doc-reupload-input");
 const docReuploadStatus = document.getElementById("doc-reupload-status");
 const docTextPreview = document.getElementById("doc-text-preview");
+const docTextRender = document.getElementById("doc-text-render");
 const docFieldsEditor = document.getElementById("doc-fields-editor");
 const docFieldsSave = document.getElementById("doc-fields-save");
 const docFieldsStatus = document.getElementById("doc-fields-status");
@@ -96,8 +95,6 @@ const rulesLoad = document.getElementById("rules-load");
 const rulesAdd = document.getElementById("rules-add");
 const rulesSave = document.getElementById("rules-save");
 const rulesReset = document.getElementById("rules-reset");
-const rulesApplyJson = document.getElementById("rules-apply-json");
-const rulesJson = document.getElementById("rules-json");
 const rulesStatus = document.getElementById("rules-status");
 const rulesBuilder = document.getElementById("rules-builder");
 const uploadButton = document.getElementById("upload-submit-btn");
@@ -149,6 +146,36 @@ const emailPreferencesStatus = document.getElementById("email-preferences-status
 const emailPreferenceInputs = Array.from(
   document.querySelectorAll('input[data-pref-key]')
 );
+const workflowPresetSelect = document.getElementById("workflow-preset-select");
+const workflowPresetApply = document.getElementById("workflow-preset-apply");
+const workflowPresetDescription = document.getElementById("workflow-preset-description");
+const workflowNewBtn = document.getElementById("workflow-new-btn");
+const workflowRefreshBtn = document.getElementById("workflow-refresh-btn");
+const workflowRulesContainer = document.getElementById("workflow-rules");
+const workflowStatus = document.getElementById("workflow-status");
+const workflowModal = document.getElementById("workflow-modal");
+const workflowModalTitle = document.getElementById("workflow-modal-title");
+const workflowModalClose = document.getElementById("workflow-modal-close");
+const workflowCancelBtn = document.getElementById("workflow-cancel-btn");
+const workflowForm = document.getElementById("workflow-form");
+const workflowNameInput = document.getElementById("workflow-name");
+const workflowEnabledInput = document.getElementById("workflow-enabled");
+const workflowTriggerSelect = document.getElementById("workflow-trigger");
+const workflowFilterDocType = document.getElementById("workflow-filter-doc-type");
+const workflowFilterDepartment = document.getElementById("workflow-filter-department");
+const workflowFilterStatus = document.getElementById("workflow-filter-status");
+const workflowFilterUrgency = document.getElementById("workflow-filter-urgency");
+const workflowFilterSource = document.getElementById("workflow-filter-source");
+const workflowFilterMinConfidence = document.getElementById(
+  "workflow-filter-min-confidence"
+);
+const workflowFilterMaxConfidence = document.getElementById(
+  "workflow-filter-max-confidence"
+);
+const workflowActionsBuilder = document.getElementById("workflow-actions-builder");
+const workflowActionTypeSelect = document.getElementById("workflow-action-type");
+const workflowActionAddBtn = document.getElementById("workflow-action-add");
+const workflowModalStatus = document.getElementById("workflow-modal-status");
 const workspaceSwitcher = document.getElementById("workspace-switcher");
 const workspaceSlug = document.getElementById("workspace-slug");
 const AUTH_TOKEN_KEY = "citysort_access_token";
@@ -161,6 +188,7 @@ let currentUserId = "";
 let currentUserEmail = "";
 let currentUserRole = "viewer";
 let currentWorkspaceId = "";
+let currentWorkspaceRole = "member";
 let workspaceCache = [];
 let userCache = [];
 let documentsCache = [];
@@ -172,6 +200,16 @@ let classifierInfo = { classifier_provider: "rules" };
 let platformSummaryRetryHandle = null;
 let activeAdminTab = "users";
 let adminAuditOffset = 0;
+let workflowPresetsCache = [];
+let workflowRulesCache = [];
+let workflowMembersCache = [];
+let workflowTemplatesCache = [];
+let workflowEditingRuleId = null;
+let workflowBuilderActions = [];
+let workflowBuilderExtraFilters = {};
+let workflowDepsWorkspaceId = "";
+let workflowMembersLoaded = false;
+let workflowTemplatesLoaded = false;
 
 const TRANSITIONS = {
   ingested: ["needs_review", "routed"],
@@ -207,6 +245,10 @@ const PAGE_CONFIG = {
   rules: {
     title: "Routing Rules",
     subtitle: "Manage classification policy, required fields, and department routing behavior for new intake.",
+  },
+  workflows: {
+    title: "Automations",
+    subtitle: "Configure workspace-specific workflow rules and apply starter presets for common government and business processes.",
   },
   admin: {
     title: "Admin",
@@ -296,6 +338,8 @@ function applyDashboardPage(page, options = {}) {
 
   if (normalized === "admin") {
     refreshAdminPageIfActive();
+  } else if (normalized === "workflows") {
+    refreshWorkflowsPageIfActive();
   }
 }
 
@@ -524,52 +568,13 @@ function collectRulesFromBuilder() {
 
 function syncJsonFromBuilder(showErrors = false) {
   try {
-    const parsed = collectRulesFromBuilder();
-    rulesJson.value = JSON.stringify(parsed, null, 2);
-    return parsed;
+    return collectRulesFromBuilder();
   } catch (error) {
     if (showErrors) {
       rulesStatus.textContent = `Rules form has an issue: ${error.message}`;
     }
     return null;
   }
-}
-
-function coerceRuleSet(candidate) {
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new Error("Rules JSON must be an object keyed by document type.");
-  }
-
-  const output = {};
-  for (const [key, rawRule] of Object.entries(candidate)) {
-    const docType = normalizeDocTypeKey(key);
-    if (!docType) continue;
-
-    if (!rawRule || typeof rawRule !== "object" || Array.isArray(rawRule)) {
-      throw new Error(`Rule for '${key}' must be an object.`);
-    }
-
-    const keywords = Array.isArray(rawRule.keywords)
-      ? rawRule.keywords.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
-      : parseListInput(rawRule.keywords || "").map((item) => item.toLowerCase());
-
-    const requiredFields = Array.isArray(rawRule.required_fields)
-      ? rawRule.required_fields.map((item) => String(item).trim()).filter(Boolean)
-      : parseListInput(rawRule.required_fields || "");
-
-    const department = String(rawRule.department || "").trim() || "General Intake";
-    const parsedSlaDays = Number.parseInt(String(rawRule.sla_days ?? "").trim(), 10);
-    const slaDays = Number.isFinite(parsedSlaDays) && parsedSlaDays >= 0 ? parsedSlaDays : null;
-
-    output[docType] = {
-      keywords,
-      department,
-      required_fields: requiredFields,
-      sla_days: slaDays,
-    };
-  }
-
-  return ensureOtherRule(output);
 }
 
 function generateNewTypeKey(rules) {
@@ -736,12 +741,14 @@ async function loadCurrentUser() {
     currentUserEmail = String(me.email || "");
     currentUserRole = String(me.role || "viewer").toLowerCase();
     currentWorkspaceId = String(me.workspace_id || currentWorkspaceId || "");
+    currentWorkspaceRole = String(me.workspace_role || "member").toLowerCase();
     return me;
   } catch {
     currentUserId = "";
     currentUserEmail = "";
     currentUserRole = "viewer";
     currentWorkspaceId = "";
+    currentWorkspaceRole = "member";
     return null;
   }
 }
@@ -783,11 +790,6 @@ function renderWorkspaceSwitcher() {
 
 async function loadWorkspaces() {
   if (!workspaceSwitcher) return;
-  if (!authToken) {
-    workspaceCache = [];
-    renderWorkspaceSwitcher();
-    return;
-  }
   try {
     const data = await parseJSON(await apiFetch("/api/workspaces"));
     workspaceCache = Array.isArray(data.items) ? data.items : [];
@@ -811,6 +813,11 @@ async function switchWorkspace(workspaceId) {
     );
     setAuthToken(String(data.access_token || ""));
     currentWorkspaceId = targetWorkspaceId;
+    workflowDepsWorkspaceId = "";
+    workflowMembersLoaded = false;
+    workflowTemplatesLoaded = false;
+    workflowMembersCache = [];
+    workflowTemplatesCache = [];
     await loadCurrentUser();
     await loadWorkspaces();
     await Promise.all([
@@ -820,6 +827,9 @@ async function switchWorkspace(workspaceId) {
       loadNotifications(),
       loadEmailPreferences(),
     ]);
+    refreshAdminPageIfActive();
+    renderWorkflowPresets();
+    refreshWorkflowsPageIfActive();
     showToast("Workspace switched.", "success");
   } catch (error) {
     await loadWorkspaces();
@@ -1136,6 +1146,1248 @@ function switchAdminTab(tabName) {
 function refreshAdminPageIfActive() {
   if (activeDashboardPage !== "admin") return;
   switchAdminTab(activeAdminTab);
+}
+
+/* ── Workflow automations ───────────────────────── */
+
+function canManageWorkflows() {
+  return String(currentWorkspaceRole || "member").toLowerCase() === "admin";
+}
+
+function setWorkflowStatus(message, isError = false) {
+  if (!workflowStatus) return;
+  workflowStatus.textContent = message || "";
+  workflowStatus.classList.toggle("error", Boolean(isError));
+}
+
+function setWorkflowModalStatus(message, isError = false) {
+  if (!workflowModalStatus) return;
+  workflowModalStatus.textContent = message || "";
+  workflowModalStatus.classList.toggle("error", Boolean(isError));
+}
+
+function workflowTriggerOptions() {
+  const base = [
+    "document_ingested",
+    "document_processed",
+    "document_reviewed",
+    "document_status_changed",
+    "document_assigned",
+    "document_overdue",
+  ];
+  const statuses = new Set();
+  Object.keys(TRANSITIONS).forEach((value) => statuses.add(value));
+  Object.values(TRANSITIONS).forEach((arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((value) => statuses.add(value));
+  });
+  const statusEvents = Array.from(statuses)
+    .filter(Boolean)
+    .map((status) => `document_${status}`)
+    .sort((a, b) => a.localeCompare(b));
+  return Array.from(new Set([...base, ...statusEvents]));
+}
+
+function workflowStatusOptions() {
+  const statuses = new Set();
+  Object.keys(TRANSITIONS).forEach((value) => statuses.add(value));
+  Object.values(TRANSITIONS).forEach((arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((value) => statuses.add(value));
+  });
+  return Array.from(statuses)
+    .filter(Boolean)
+    .sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+function applyWorkflowFiltersToBuilder(filters) {
+  const known = new Set([
+    "doc_type",
+    "department",
+    "status",
+    "urgency",
+    "source_channel",
+    "min_confidence",
+    "max_confidence",
+  ]);
+
+  workflowBuilderExtraFilters = {};
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (!known.has(key)) {
+      workflowBuilderExtraFilters[key] = value;
+    }
+  });
+
+  const applyList = (input, value) => {
+    if (!input) return;
+    if (Array.isArray(value)) {
+      input.value = formatListInput(value.map((v) => String(v)));
+    } else {
+      input.value = value === null || value === undefined ? "" : String(value);
+    }
+  };
+
+  applyList(workflowFilterDocType, filters ? filters.doc_type : "");
+  applyList(workflowFilterDepartment, filters ? filters.department : "");
+  applyList(workflowFilterStatus, filters ? filters.status : "");
+  applyList(workflowFilterSource, filters ? filters.source_channel : "");
+
+  if (workflowFilterUrgency) {
+    workflowFilterUrgency.value = filters && filters.urgency ? String(filters.urgency) : "";
+  }
+  if (workflowFilterMinConfidence) {
+    workflowFilterMinConfidence.value =
+      filters && filters.min_confidence !== undefined && filters.min_confidence !== null
+        ? String(filters.min_confidence)
+        : "";
+  }
+  if (workflowFilterMaxConfidence) {
+    workflowFilterMaxConfidence.value =
+      filters && filters.max_confidence !== undefined && filters.max_confidence !== null
+        ? String(filters.max_confidence)
+        : "";
+  }
+}
+
+function collectWorkflowFiltersFromBuilder() {
+  const filters = { ...(workflowBuilderExtraFilters || {}) };
+
+  const setListFilter = (key, input) => {
+    if (!input) return;
+    const items = parseListInput(input.value);
+    if (!items.length) {
+      delete filters[key];
+      return;
+    }
+    filters[key] = items.length === 1 ? items[0] : items;
+  };
+
+  setListFilter("doc_type", workflowFilterDocType);
+  setListFilter("department", workflowFilterDepartment);
+  setListFilter("status", workflowFilterStatus);
+  setListFilter("source_channel", workflowFilterSource);
+
+  if (workflowFilterUrgency) {
+    const urgency = String(workflowFilterUrgency.value || "").trim();
+    if (urgency) {
+      filters.urgency = urgency;
+    } else {
+      delete filters.urgency;
+    }
+  }
+
+  const minRaw = workflowFilterMinConfidence ? String(workflowFilterMinConfidence.value || "").trim() : "";
+  if (minRaw) {
+    const parsed = Number.parseFloat(minRaw);
+    if (Number.isFinite(parsed)) {
+      filters.min_confidence = parsed;
+    }
+  } else {
+    delete filters.min_confidence;
+  }
+
+  const maxRaw = workflowFilterMaxConfidence ? String(workflowFilterMaxConfidence.value || "").trim() : "";
+  if (maxRaw) {
+    const parsed = Number.parseFloat(maxRaw);
+    if (Number.isFinite(parsed)) {
+      filters.max_confidence = parsed;
+    }
+  } else {
+    delete filters.max_confidence;
+  }
+
+  return filters;
+}
+
+function normalizeWorkflowBuilderAction(action) {
+  if (!action || typeof action !== "object" || Array.isArray(action)) return null;
+  const type = String(action.type || "").trim().toLowerCase();
+  if (!type) return null;
+  const config = action.config && typeof action.config === "object" && !Array.isArray(action.config)
+    ? { ...action.config }
+    : {};
+
+  const cleanEmpty = (key) => {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) return;
+    const value = config[key];
+    if (value === null || value === undefined) {
+      delete config[key];
+      return;
+    }
+    if (typeof value === "string" && !value.trim()) {
+      delete config[key];
+    }
+  };
+
+  if (type === "assign") {
+    // Assignee can be config.user_id or config.assignee=workspace_owner.
+    cleanEmpty("assignee");
+    cleanEmpty("user_id");
+    config.only_if_unassigned = Boolean(config.only_if_unassigned !== false);
+    config.set_status_assigned = Boolean(config.set_status_assigned !== false);
+  } else if (type === "send_template_email") {
+    cleanEmpty("template_name_hint");
+    cleanEmpty("template_id");
+    if (Object.prototype.hasOwnProperty.call(config, "template_id")) {
+      const raw = config.template_id;
+      const asInt = Number.parseInt(String(raw), 10);
+      if (Number.isFinite(asInt)) {
+        config.template_id = asInt;
+      } else {
+        delete config.template_id;
+      }
+    }
+  } else if (type === "create_notification") {
+    cleanEmpty("type");
+    cleanEmpty("title");
+    cleanEmpty("message");
+    cleanEmpty("user_id");
+  } else if (type === "webhook_post") {
+    cleanEmpty("url");
+  } else if (type === "transition") {
+    cleanEmpty("status");
+    cleanEmpty("to_status");
+    cleanEmpty("notes");
+    if (Object.prototype.hasOwnProperty.call(config, "to_status") && !Object.prototype.hasOwnProperty.call(config, "status")) {
+      config.status = config.to_status;
+      delete config.to_status;
+    }
+  }
+
+  return { type, config };
+}
+
+function workflowMemberLabel(member) {
+  const fullName = String(member.full_name || "").trim();
+  const email = String(member.email || "").trim();
+  const userId = String(member.user_id || "").trim();
+  if (fullName && email) return `${fullName} <${email}>`;
+  return fullName || email || userId || "Member";
+}
+
+function workflowTemplateLabel(template) {
+  const name = String(template.name || "").trim();
+  const docType = String(template.doc_type || "").trim();
+  return docType ? `${name} (${docType})` : name || "Template";
+}
+
+async function ensureWorkflowBuilderDependenciesLoaded() {
+  const wid = String(currentWorkspaceId || "").trim();
+  if (!wid) {
+    workflowDepsWorkspaceId = "";
+    workflowMembersLoaded = true;
+    workflowTemplatesLoaded = true;
+    workflowMembersCache = [];
+    workflowTemplatesCache = [];
+    return;
+  }
+
+  const needsReset = workflowDepsWorkspaceId && workflowDepsWorkspaceId !== wid;
+  if (needsReset) {
+    workflowMembersLoaded = false;
+    workflowTemplatesLoaded = false;
+    workflowMembersCache = [];
+    workflowTemplatesCache = [];
+  }
+  workflowDepsWorkspaceId = wid;
+
+  const tasks = [];
+  if (!workflowMembersLoaded) {
+    tasks.push(
+      (async () => {
+        try {
+          const data = await parseJSON(
+            await apiFetch(`/api/workspaces/${encodeURIComponent(wid)}/members`)
+          );
+          workflowMembersCache = Array.isArray(data.items) ? data.items : [];
+        } catch {
+          workflowMembersCache = [];
+        } finally {
+          workflowMembersLoaded = true;
+        }
+      })()
+    );
+  }
+
+  if (!workflowTemplatesLoaded) {
+    tasks.push(
+      (async () => {
+        try {
+          const data = await parseJSON(await apiFetch("/api/templates?limit=200"));
+          workflowTemplatesCache = Array.isArray(data.items) ? data.items : [];
+        } catch {
+          workflowTemplatesCache = [];
+        } finally {
+          workflowTemplatesLoaded = true;
+        }
+      })()
+    );
+  }
+
+  if (tasks.length) {
+    await Promise.all(tasks);
+  }
+}
+
+function renderWorkflowActionsBuilder() {
+  if (!workflowActionsBuilder) return;
+  const actions = Array.isArray(workflowBuilderActions) ? workflowBuilderActions : [];
+  if (!actions.length) {
+    workflowActionsBuilder.innerHTML =
+      '<div class="preview-empty">No actions yet. Use the picker below to add one.</div>';
+    return;
+  }
+
+  const memberOptions = [
+    '<option value="workspace_owner">Workspace owner</option>',
+    ...workflowMembersCache.map((member) => {
+      const userId = escapeHtml(String(member.user_id || ""));
+      const label = escapeHtml(workflowMemberLabel(member));
+      return `<option value="${userId}">${label}</option>`;
+    }),
+  ].join("");
+
+  const recipientOptions = [
+    '<option value="">Broadcast (all members)</option>',
+    ...workflowMembersCache.map((member) => {
+      const userId = escapeHtml(String(member.user_id || ""));
+      const label = escapeHtml(workflowMemberLabel(member));
+      return `<option value="${userId}">${label}</option>`;
+    }),
+  ].join("");
+
+  const templateOptions = [
+    '<option value="">Select template...</option>',
+    ...workflowTemplatesCache.map((tmpl) => {
+      const id = escapeHtml(String(tmpl.id));
+      const label = escapeHtml(workflowTemplateLabel(tmpl));
+      return `<option value="${id}">${label}</option>`;
+    }),
+  ].join("");
+
+  const statusOptions = workflowStatusOptions()
+    .map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`)
+    .join("");
+
+  const labelByType = {
+    assign: "Assign",
+    send_template_email: "Send Template Email",
+    create_notification: "Create Notification",
+    webhook_post: "Webhook POST",
+    transition: "Transition Status",
+  };
+
+  workflowActionsBuilder.innerHTML = actions
+    .map((action, index) => {
+      const type = String(action.type || "").trim().toLowerCase();
+      const config = action.config && typeof action.config === "object" && !Array.isArray(action.config)
+        ? action.config
+        : {};
+      const title = escapeHtml(labelByType[type] || type || "Action");
+      const disableUp = index === 0;
+      const disableDown = index === actions.length - 1;
+
+      const head = `
+        <div class="workflow-action-head">
+          <strong>${title}</strong>
+          <div class="workflow-action-controls">
+            <button type="button" class="secondary workflow-action-move-up" data-action-index="${index}" ${disableUp ? "disabled" : ""}>Up</button>
+            <button type="button" class="secondary workflow-action-move-down" data-action-index="${index}" ${disableDown ? "disabled" : ""}>Down</button>
+            <button type="button" class="secondary workflow-action-delete" data-action-index="${index}">Remove</button>
+          </div>
+        </div>
+      `;
+
+      if (type === "assign") {
+        const onlyIfUnassigned = config.only_if_unassigned !== false;
+        const setAssigned = config.set_status_assigned !== false;
+        return `
+          <div class="workflow-action-card" data-action-index="${index}">
+            ${head}
+            <div class="workflow-action-grid">
+              <div class="workflow-field">
+                <label>Assign to</label>
+                <select data-action-field="assignee_target">${memberOptions}</select>
+              </div>
+              <div class="workflow-field">
+                <label>Only if unassigned</label>
+                <input type="checkbox" data-action-field="only_if_unassigned" ${onlyIfUnassigned ? "checked" : ""} />
+              </div>
+              <div class="workflow-field">
+                <label>Set status to assigned</label>
+                <input type="checkbox" data-action-field="set_status_assigned" ${setAssigned ? "checked" : ""} />
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (type === "send_template_email") {
+        const templateId = config.template_id !== undefined && config.template_id !== null
+          ? String(config.template_id)
+          : "";
+        const hint = escapeHtml(String(config.template_name_hint || ""));
+        return `
+          <div class="workflow-action-card" data-action-index="${index}">
+            ${head}
+            <div class="workflow-action-grid">
+              <div class="workflow-field">
+                <label>Template</label>
+                <select data-action-field="template_id">${templateOptions}</select>
+              </div>
+              <div class="workflow-field full">
+                <label>Template name hint (optional)</label>
+                <input type="text" data-action-field="template_name_hint" placeholder="e.g., permit response" value="${hint}" />
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (type === "create_notification") {
+        const notifType = escapeHtml(String(config.type || "workflow"));
+        const titleTmpl = escapeHtml(String(config.title || "Workflow event"));
+        const messageTmpl = escapeHtml(String(config.message || ""));
+        return `
+          <div class="workflow-action-card" data-action-index="${index}">
+            ${head}
+            <div class="workflow-action-grid">
+              <div class="workflow-field">
+                <label>Notification type</label>
+                <input type="text" data-action-field="type" value="${notifType}" />
+              </div>
+              <div class="workflow-field">
+                <label>Recipient</label>
+                <select data-action-field="user_id">${recipientOptions}</select>
+              </div>
+              <div class="workflow-field full">
+                <label>Title template</label>
+                <input type="text" data-action-field="title" value="${titleTmpl}" />
+              </div>
+              <div class="workflow-field full">
+                <label>Message template</label>
+                <textarea rows="3" data-action-field="message" placeholder="e.g., {{filename}} needs review">${messageTmpl}</textarea>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (type === "webhook_post") {
+        const url = escapeHtml(String(config.url || ""));
+        return `
+          <div class="workflow-action-card" data-action-index="${index}">
+            ${head}
+            <div class="workflow-action-grid">
+              <div class="workflow-field full">
+                <label>Webhook URL</label>
+                <input type="url" data-action-field="url" placeholder="https://example.com/webhook" value="${url}" />
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (type === "transition") {
+        const notes = escapeHtml(String(config.notes || ""));
+        return `
+          <div class="workflow-action-card" data-action-index="${index}">
+            ${head}
+            <div class="workflow-action-grid">
+              <div class="workflow-field">
+                <label>Target status</label>
+                <select data-action-field="status">
+                  <option value="">Select status...</option>
+                  ${statusOptions}
+                </select>
+              </div>
+              <div class="workflow-field full">
+                <label>Notes (optional)</label>
+                <textarea rows="2" data-action-field="notes" placeholder="Saved to reviewer_notes">${notes}</textarea>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      const configPreview = escapeHtml(JSON.stringify(config, null, 2));
+      return `
+        <div class="workflow-action-card" data-action-index="${index}">
+          ${head}
+          <div class="workflow-action-grid">
+            <div class="workflow-field full">
+              <p class="status hint">This action type isn't editable in the Builder yet.</p>
+              <code>${configPreview}</code>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // Apply selected values after inserting markup (so <option> lists exist).
+  workflowActionsBuilder.querySelectorAll(".workflow-action-card").forEach((card) => {
+    const idx = Number(card.dataset.actionIndex || "");
+    if (!Number.isFinite(idx)) return;
+    const action = workflowBuilderActions[idx];
+    if (!action) return;
+    const type = String(action.type || "").trim().toLowerCase();
+    const config = action.config && typeof action.config === "object" && !Array.isArray(action.config)
+      ? action.config
+      : {};
+    if (type === "assign") {
+      const select = card.querySelector('select[data-action-field="assignee_target"]');
+      if (select) {
+        const current = String(config.user_id || config.assignee || "workspace_owner");
+        select.value = current;
+      }
+    } else if (type === "send_template_email") {
+      const select = card.querySelector('select[data-action-field="template_id"]');
+      if (select) select.value = config.template_id !== undefined && config.template_id !== null ? String(config.template_id) : "";
+    } else if (type === "create_notification") {
+      const select = card.querySelector('select[data-action-field="user_id"]');
+      if (select) select.value = String(config.user_id || "");
+    } else if (type === "transition") {
+      const select = card.querySelector('select[data-action-field="status"]');
+      if (select) select.value = String(config.status || config.to_status || "");
+    }
+  });
+}
+
+function addWorkflowBuilderAction(type) {
+  const actionType = String(type || "").trim().toLowerCase();
+  if (!actionType) return;
+  const defaultsByType = {
+    assign: { type: "assign", config: { assignee: "workspace_owner", only_if_unassigned: true, set_status_assigned: true } },
+    send_template_email: { type: "send_template_email", config: {} },
+    create_notification: {
+      type: "create_notification",
+      config: { type: "workflow", title: "Workflow event", message: "" },
+    },
+    webhook_post: { type: "webhook_post", config: { url: "" } },
+    transition: { type: "transition", config: { status: "" } },
+  };
+  const action = defaultsByType[actionType] || { type: actionType, config: {} };
+  workflowBuilderActions = Array.isArray(workflowBuilderActions) ? workflowBuilderActions : [];
+  workflowBuilderActions.push(action);
+  renderWorkflowActionsBuilder();
+  syncWorkflowBuilderToJson();
+}
+
+function removeWorkflowBuilderAction(index) {
+  const idx = Number(index || "");
+  if (!Number.isFinite(idx)) return;
+  if (!Array.isArray(workflowBuilderActions)) return;
+  workflowBuilderActions.splice(idx, 1);
+  renderWorkflowActionsBuilder();
+}
+
+function moveWorkflowBuilderAction(index, delta) {
+  const idx = Number(index || "");
+  const step = Number(delta || 0);
+  if (!Number.isFinite(idx) || !Number.isFinite(step) || step === 0) return;
+  if (!Array.isArray(workflowBuilderActions)) return;
+  const next = idx + step;
+  if (next < 0 || next >= workflowBuilderActions.length) return;
+  const copy = workflowBuilderActions.slice();
+  const [item] = copy.splice(idx, 1);
+  copy.splice(next, 0, item);
+  workflowBuilderActions = copy;
+  renderWorkflowActionsBuilder();
+}
+
+function applyWorkflowBuilderActionChange(index, field, target) {
+  const idx = Number(index || "");
+  if (!Number.isFinite(idx)) return;
+  if (!Array.isArray(workflowBuilderActions)) return;
+  const action = workflowBuilderActions[idx];
+  if (!action) return;
+  const type = String(action.type || "").trim().toLowerCase();
+  if (!action.config || typeof action.config !== "object" || Array.isArray(action.config)) {
+    action.config = {};
+  }
+  const config = action.config;
+  const key = String(field || "").trim();
+  if (!key || !target) return;
+
+  const value = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+    ? String(target.value || "")
+    : target instanceof HTMLSelectElement
+      ? String(target.value || "")
+      : "";
+  const checked = target instanceof HTMLInputElement && target.type === "checkbox"
+    ? Boolean(target.checked)
+    : false;
+
+  if (type === "assign") {
+    if (key === "assignee_target") {
+      const selected = String(value || "").trim();
+      if (!selected) {
+        delete config.user_id;
+        delete config.assignee;
+      } else if (selected === "workspace_owner") {
+        config.assignee = "workspace_owner";
+        delete config.user_id;
+      } else {
+        config.user_id = selected;
+        delete config.assignee;
+      }
+    } else if (key === "only_if_unassigned") {
+      config.only_if_unassigned = checked;
+    } else if (key === "set_status_assigned") {
+      config.set_status_assigned = checked;
+    }
+  } else if (type === "send_template_email") {
+    if (key === "template_id") {
+      const raw = String(value || "").trim();
+      if (!raw) {
+        delete config.template_id;
+      } else {
+        const asInt = Number.parseInt(raw, 10);
+        if (Number.isFinite(asInt)) {
+          config.template_id = asInt;
+        } else {
+          delete config.template_id;
+        }
+      }
+    } else if (key === "template_name_hint") {
+      const hint = String(value || "").trim();
+      if (hint) {
+        config.template_name_hint = hint;
+      } else {
+        delete config.template_name_hint;
+      }
+    }
+  } else if (type === "create_notification") {
+    if (key === "type") {
+      const notifType = String(value || "").trim();
+      if (notifType) config.type = notifType;
+      else delete config.type;
+    } else if (key === "user_id") {
+      const uid = String(value || "").trim();
+      if (uid) config.user_id = uid;
+      else delete config.user_id;
+    } else if (key === "title") {
+      const title = String(value || "").trim();
+      if (title) config.title = title;
+      else delete config.title;
+    } else if (key === "message") {
+      const message = String(value || "").trim();
+      if (message) config.message = message;
+      else delete config.message;
+    }
+  } else if (type === "webhook_post") {
+    if (key === "url") {
+      const url = String(value || "").trim();
+      if (url) config.url = url;
+      else delete config.url;
+    }
+  } else if (type === "transition") {
+    if (key === "status") {
+      const status = String(value || "").trim().toLowerCase();
+      if (status) config.status = status;
+      else delete config.status;
+    } else if (key === "notes") {
+      const notes = String(value || "").trim();
+      if (notes) config.notes = notes;
+      else delete config.notes;
+    }
+  } else {
+    // Best-effort passthrough for unknown types.
+    const raw = String(value || "").trim();
+    if (raw) config[key] = raw;
+    else delete config[key];
+  }
+}
+
+function renderWorkflowPresets() {
+  if (!workflowPresetSelect) return;
+  const items = Array.isArray(workflowPresetsCache) ? workflowPresetsCache : [];
+  const canEdit = canManageWorkflows();
+  if (!items.length) {
+    workflowPresetSelect.innerHTML = '<option value="">No presets available</option>';
+    workflowPresetSelect.disabled = true;
+    if (workflowPresetApply) workflowPresetApply.disabled = true;
+    if (workflowNewBtn) workflowNewBtn.disabled = !canEdit;
+    if (workflowPresetDescription) workflowPresetDescription.textContent = "";
+    return;
+  }
+
+  workflowPresetSelect.disabled = false;
+  const selected = String(workflowPresetSelect.value || "").trim();
+  workflowPresetSelect.innerHTML = items
+    .map((preset) => {
+      const id = escapeHtml(String(preset.id || ""));
+      const name = escapeHtml(String(preset.name || preset.id || "Preset"));
+      const category = escapeHtml(String(preset.category || "general"));
+      return `<option value="${id}">[${category}] ${name}</option>`;
+    })
+    .join("");
+
+  const nextSelected = selected && items.some((p) => String(p.id) === selected)
+    ? selected
+    : String(items[0].id || "");
+  workflowPresetSelect.value = nextSelected;
+
+  const active = items.find((preset) => String(preset.id || "") === nextSelected);
+  if (workflowPresetDescription) {
+    const desc = active ? String(active.description || "") : "";
+    const detail = active
+      ? `Rules: ${Number(active.rules_count || 0)} · Templates: ${Number(active.templates_count || 0)}`
+      : "";
+    workflowPresetDescription.textContent = desc ? `${desc} ${detail}` : detail;
+  }
+
+  if (workflowPresetApply) {
+    workflowPresetApply.disabled = !canEdit;
+  }
+  if (workflowNewBtn) {
+    workflowNewBtn.disabled = !canEdit;
+  }
+}
+
+async function loadWorkflowPresets() {
+  if (!workflowPresetSelect) return;
+  try {
+    const data = await parseJSON(await apiFetch("/api/workflows/presets"));
+    workflowPresetsCache = Array.isArray(data.items) ? data.items : [];
+  } catch (error) {
+    workflowPresetsCache = [];
+    setWorkflowStatus(`Failed to load presets: ${error.message}`, true);
+  }
+  renderWorkflowPresets();
+}
+
+function summarizeWorkflowFilters(filters) {
+  if (!filters || typeof filters !== "object" || Array.isArray(filters)) {
+    return "Any document";
+  }
+  const known = new Set([
+    "doc_type",
+    "department",
+    "status",
+    "urgency",
+    "source_channel",
+    "min_confidence",
+    "max_confidence",
+  ]);
+  const lines = [];
+
+  const pushList = (key, label) => {
+    const raw = filters[key];
+    if (raw === null || raw === undefined || raw === "") return;
+    const items = Array.isArray(raw)
+      ? raw.map((v) => String(v).trim()).filter(Boolean)
+      : [String(raw).trim()].filter(Boolean);
+    if (!items.length) return;
+    lines.push(`${label}: ${items.join(", ")}`);
+  };
+
+  pushList("doc_type", "Doc type");
+  pushList("department", "Department");
+  pushList("status", "Status");
+  pushList("source_channel", "Source");
+
+  const urgency = String(filters.urgency || "").trim();
+  if (urgency) {
+    lines.push(`Urgency: ${urgency}`);
+  }
+
+  const minRaw = filters.min_confidence;
+  const maxRaw = filters.max_confidence;
+  const min = minRaw === null || minRaw === undefined || minRaw === "" ? null : Number(minRaw);
+  const max = maxRaw === null || maxRaw === undefined || maxRaw === "" ? null : Number(maxRaw);
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    lines.push(`Confidence: ${min} to ${max}`);
+  } else if (Number.isFinite(min)) {
+    lines.push(`Confidence: >= ${min}`);
+  } else if (Number.isFinite(max)) {
+    lines.push(`Confidence: <= ${max}`);
+  }
+
+  const extraKeys = Object.keys(filters)
+    .filter((key) => !known.has(key))
+    .filter((key) => {
+      const value = filters[key];
+      if (value === null || value === undefined || value === "") return false;
+      if (Array.isArray(value) && !value.length) return false;
+      return true;
+    });
+  if (extraKeys.length) {
+    lines.push(`Other: ${extraKeys.join(", ")}`);
+  }
+
+  return lines.length ? lines.join("\n") : "Any document";
+}
+
+function summarizeWorkflowActions(actions) {
+  if (!Array.isArray(actions) || !actions.length) {
+    return "No actions";
+  }
+
+  const lines = [];
+  actions.forEach((action) => {
+    if (!action || typeof action !== "object" || Array.isArray(action)) return;
+    const type = String(action.type || "").trim().toLowerCase();
+    const config = action.config && typeof action.config === "object" && !Array.isArray(action.config)
+      ? action.config
+      : {};
+
+    if (type === "assign") {
+      const assignee = String(config.assignee || "").trim().toLowerCase();
+      const userId = String(config.user_id || "").trim();
+      const target = assignee === "workspace_owner" || (!assignee && !userId)
+        ? "Workspace owner"
+        : userNameById(userId || assignee);
+      const onlyIfUnassigned = config.only_if_unassigned !== false;
+      const setAssigned = config.set_status_assigned !== false;
+      const flags = [];
+      if (onlyIfUnassigned) flags.push("only if unassigned");
+      if (setAssigned) flags.push("set status assigned");
+      lines.push(`Assign to ${target}${flags.length ? ` (${flags.join("; ")})` : ""}`);
+      return;
+    }
+
+    if (type === "send_template_email") {
+      const templateId = config.template_id !== undefined && config.template_id !== null
+        ? String(config.template_id)
+        : "";
+      const hint = String(config.template_name_hint || "").trim();
+      const detail = templateId
+        ? `Template #${templateId}`
+        : hint
+          ? `Template name contains "${hint}"`
+          : "Template not selected";
+      lines.push(`Send template email: ${detail}`);
+      return;
+    }
+
+    if (type === "create_notification") {
+      const notifType = String(config.type || "workflow").trim() || "workflow";
+      const userId = String(config.user_id || "").trim();
+      const recipient = userId ? userNameById(userId) : "Broadcast";
+      const title = String(config.title || "").trim();
+      lines.push(
+        `Notify ${recipient} (${notifType})${title ? `: ${title}` : ""}`
+      );
+      return;
+    }
+
+    if (type === "webhook_post") {
+      const url = String(config.url || "").trim();
+      lines.push(`Webhook POST${url ? `: ${url}` : ""}`);
+      return;
+    }
+
+    if (type === "transition") {
+      const status = String(config.status || config.to_status || "").trim().toLowerCase();
+      lines.push(`Transition status${status ? `: ${status}` : ""}`);
+      return;
+    }
+
+    if (type) {
+      lines.push(`Action: ${type}`);
+    }
+  });
+
+  return lines.length ? lines.map((line) => `- ${line}`).join("\n") : "No actions";
+}
+
+function renderWorkflowRules() {
+  if (!workflowRulesContainer) return;
+  const rules = Array.isArray(workflowRulesCache) ? workflowRulesCache : [];
+  if (!rules.length) {
+    workflowRulesContainer.innerHTML = '<div class="preview-empty">No workflow rules yet.</div>';
+    return;
+  }
+
+  const canEdit = canManageWorkflows();
+  workflowRulesContainer.innerHTML = rules
+    .map((rule) => {
+      const ruleId = Number(rule.id || 0);
+      const name = escapeHtml(String(rule.name || `Rule ${ruleId}`));
+      const trigger = escapeHtml(String(rule.trigger_event || "-"));
+      const enabled = Boolean(rule.enabled);
+      const filters = summarizeWorkflowFilters(rule.filters || {});
+      const actions = summarizeWorkflowActions(rule.actions || []);
+      return `
+        <div class="workflow-rule-card" data-workflow-id="${ruleId}">
+          <div class="workflow-rule-head">
+            <div class="workflow-rule-title">
+              <strong>${name}</strong>
+              <div class="workflow-rule-meta">Trigger: <code>${trigger}</code></div>
+            </div>
+            <div class="workflow-rule-actions">
+              <label class="pref-item" title="Enable/disable this workflow rule">
+                <input class="workflow-enabled-toggle" type="checkbox" data-workflow-id="${ruleId}" ${enabled ? "checked" : ""} ${canEdit ? "" : "disabled"} />
+                Enabled
+              </label>
+              <button type="button" class="secondary workflow-edit-btn" data-workflow-id="${ruleId}" ${canEdit ? "" : "disabled"}>Edit</button>
+              <button type="button" class="secondary workflow-delete-btn" data-workflow-id="${ruleId}" ${canEdit ? "" : "disabled"}>Delete</button>
+            </div>
+          </div>
+          <div class="workflow-rule-body">
+            <div class="workflow-rule-kv">
+              <span>Filters</span>
+              <code>${escapeHtml(filters)}</code>
+            </div>
+            <div class="workflow-rule-kv">
+              <span>Actions</span>
+              <code>${escapeHtml(actions)}</code>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function loadWorkflowRules() {
+  if (!workflowRulesContainer) return;
+  setWorkflowStatus("Loading workflow rules...");
+  try {
+    const data = await parseJSON(await apiFetch("/api/workflows"));
+    workflowRulesCache = Array.isArray(data.items) ? data.items : [];
+    renderWorkflowRules();
+    setWorkflowStatus(`Loaded ${workflowRulesCache.length} workflow rule(s).`);
+  } catch (error) {
+    workflowRulesCache = [];
+    renderWorkflowRules();
+    setWorkflowStatus(`Failed to load workflows: ${error.message}`, true);
+  }
+}
+
+function refreshWorkflowsPageIfActive() {
+  if (activeDashboardPage !== "workflows") return;
+  loadWorkflowRules().catch((error) => {
+    setWorkflowStatus(`Failed to load workflows: ${error.message}`, true);
+  });
+}
+
+function openWorkflowModal(rule) {
+  if (!workflowModal) return;
+  const isEdit = Boolean(rule && rule.id);
+  workflowEditingRuleId = isEdit ? Number(rule.id) : null;
+  if (workflowModalTitle) {
+    workflowModalTitle.textContent = isEdit ? "Edit Workflow Rule" : "New Workflow Rule";
+  }
+  if (workflowNameInput) {
+    workflowNameInput.value = String((rule && rule.name) || "");
+  }
+  if (workflowEnabledInput) {
+    workflowEnabledInput.checked = Boolean(rule ? rule.enabled : true);
+  }
+  if (workflowTriggerSelect) {
+    const value = String((rule && rule.trigger_event) || "document_needs_review");
+    if (!Array.from(workflowTriggerSelect.options).some((opt) => opt.value === value)) {
+      const custom = document.createElement("option");
+      custom.value = value;
+      custom.textContent = value;
+      workflowTriggerSelect.appendChild(custom);
+    }
+    workflowTriggerSelect.value = value;
+  }
+  setWorkflowModalStatus("");
+  const fallbackActions = [
+    { type: "assign", config: { assignee: "workspace_owner", only_if_unassigned: true } },
+  ];
+  const filters = (rule && rule.filters) || {};
+  applyWorkflowFiltersToBuilder(filters);
+  workflowBuilderActions = ((rule && rule.actions) || fallbackActions)
+    .map((action) => normalizeWorkflowBuilderAction(action))
+    .filter(Boolean);
+  renderWorkflowActionsBuilder();
+  const extraKeys = Object.keys(workflowBuilderExtraFilters || {});
+  if (extraKeys.length) {
+    setWorkflowModalStatus(
+      `Note: preserving extra filters (${extraKeys.join(", ")}).`,
+      false
+    );
+  }
+  workflowModal.hidden = false;
+  workflowModal.setAttribute("aria-hidden", "false");
+  if (workflowNameInput) workflowNameInput.focus();
+
+  ensureWorkflowBuilderDependenciesLoaded()
+    .then(() => {
+      if (!workflowModal.hidden) {
+        renderWorkflowActionsBuilder();
+      }
+    })
+    .catch(() => {});
+}
+
+function closeWorkflowModal() {
+  if (!workflowModal) return;
+  workflowModal.hidden = true;
+  workflowModal.setAttribute("aria-hidden", "true");
+  workflowEditingRuleId = null;
+  workflowBuilderActions = [];
+  workflowBuilderExtraFilters = {};
+  setWorkflowModalStatus("");
+}
+
+async function saveWorkflowFromModal() {
+  if (!workflowNameInput || !workflowTriggerSelect) {
+    return;
+  }
+  const name = String(workflowNameInput.value || "").trim();
+  if (!name) {
+    setWorkflowModalStatus("Name is required.", true);
+    return;
+  }
+  const triggerEvent = String(workflowTriggerSelect.value || "").trim();
+  if (!triggerEvent) {
+    setWorkflowModalStatus("Trigger event is required.", true);
+    return;
+  }
+
+  const filters = collectWorkflowFiltersFromBuilder();
+  const actions = (workflowBuilderActions || [])
+    .map((action) => normalizeWorkflowBuilderAction(action))
+    .filter(Boolean);
+  if (!actions.length) {
+    setWorkflowModalStatus("At least one action is required.", true);
+    return;
+  }
+
+  const payload = {
+    name,
+    enabled: workflowEnabledInput ? Boolean(workflowEnabledInput.checked) : true,
+    trigger_event: triggerEvent,
+    filters,
+    actions,
+  };
+
+  const isEdit = workflowEditingRuleId !== null;
+  const url = isEdit ? `/api/workflows/${workflowEditingRuleId}` : "/api/workflows";
+  const method = isEdit ? "PATCH" : "POST";
+
+  setWorkflowModalStatus("Saving...");
+  try {
+    await parseJSON(
+      await apiFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+    );
+    closeWorkflowModal();
+    showToast(isEdit ? "Workflow rule updated." : "Workflow rule created.", "success");
+    await loadWorkflowRules();
+  } catch (error) {
+    setWorkflowModalStatus(`Save failed: ${error.message}`, true);
+  }
+}
+
+async function applySelectedWorkflowPreset() {
+  if (!workflowPresetSelect) return;
+  const presetId = String(workflowPresetSelect.value || "").trim();
+  if (!presetId) return;
+  if (!canManageWorkflows()) {
+    showToast("Workspace admin access is required to apply presets.", "warning");
+    return;
+  }
+  setWorkflowStatus(`Applying preset '${presetId}'...`);
+  try {
+    const result = await parseJSON(
+      await apiFetch(`/api/workflows/presets/${encodeURIComponent(presetId)}/apply`, {
+        method: "POST",
+      })
+    );
+    const createdRules = Array.isArray(result.created_rules) ? result.created_rules.length : 0;
+    const createdTemplates = Array.isArray(result.created_templates) ? result.created_templates.length : 0;
+    const skippedRules = Number(result.skipped_rules || 0);
+    showToast(
+      `Preset applied. Rules: +${createdRules} (skipped ${skippedRules}). Templates: +${createdTemplates}.`,
+      "success"
+    );
+    await loadWorkflowRules();
+  } catch (error) {
+    setWorkflowStatus(`Preset apply failed: ${error.message}`, true);
+    showToast(`Preset apply failed: ${error.message}`, "error");
+  }
+}
+
+async function deleteWorkflowRule(ruleId) {
+  const id = Number(ruleId || 0);
+  if (!id) return;
+  if (!canManageWorkflows()) {
+    showToast("Workspace admin access is required to delete rules.", "warning");
+    return;
+  }
+  if (!window.confirm("Delete this workflow rule? This cannot be undone.")) {
+    return;
+  }
+  setWorkflowStatus("Deleting workflow rule...");
+  try {
+    await parseJSON(
+      await apiFetch(`/api/workflows/${id}`, {
+        method: "DELETE",
+      })
+    );
+    showToast("Workflow rule deleted.", "success");
+    await loadWorkflowRules();
+  } catch (error) {
+    setWorkflowStatus(`Delete failed: ${error.message}`, true);
+  }
+}
+
+async function setWorkflowRuleEnabled(ruleId, enabled) {
+  const id = Number(ruleId || 0);
+  if (!id) return;
+  try {
+    await parseJSON(
+      await apiFetch(`/api/workflows/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: Boolean(enabled) }),
+      })
+    );
+  } catch (error) {
+    showToast(`Failed to update rule: ${error.message}`, "error");
+    throw error;
+  }
+}
+
+function bindWorkflows() {
+  if (workflowTriggerSelect) {
+    workflowTriggerSelect.innerHTML = workflowTriggerOptions()
+      .map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+      .join("");
+  }
+
+  if (workflowActionAddBtn) {
+    workflowActionAddBtn.addEventListener("click", () => {
+      const actionType = workflowActionTypeSelect ? String(workflowActionTypeSelect.value || "") : "assign";
+      addWorkflowBuilderAction(actionType);
+    });
+  }
+
+  if (workflowActionsBuilder) {
+    workflowActionsBuilder.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const del = event.target.closest(".workflow-action-delete");
+      if (del) {
+        removeWorkflowBuilderAction(del.dataset.actionIndex);
+        return;
+      }
+      const up = event.target.closest(".workflow-action-move-up");
+      if (up) {
+        moveWorkflowBuilderAction(up.dataset.actionIndex, -1);
+        return;
+      }
+      const down = event.target.closest(".workflow-action-move-down");
+      if (down) {
+        moveWorkflowBuilderAction(down.dataset.actionIndex, 1);
+      }
+    });
+
+    const handleFieldChange = (event) => {
+      if (!(event.target instanceof Element)) return;
+      const field = String(event.target.dataset.actionField || "").trim();
+      if (!field) return;
+      const card = event.target.closest(".workflow-action-card");
+      if (!card) return;
+      const idx = card.dataset.actionIndex;
+      applyWorkflowBuilderActionChange(idx, field, event.target);
+    };
+    workflowActionsBuilder.addEventListener("change", handleFieldChange);
+    workflowActionsBuilder.addEventListener("input", handleFieldChange);
+  }
+
+  if (workflowPresetSelect) {
+    workflowPresetSelect.addEventListener("change", () => {
+      renderWorkflowPresets();
+    });
+  }
+
+  if (workflowPresetApply) {
+    workflowPresetApply.addEventListener("click", () => {
+      applySelectedWorkflowPreset().catch((error) => {
+        setWorkflowStatus(`Preset apply failed: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (workflowNewBtn) {
+    workflowNewBtn.addEventListener("click", () => {
+      if (!canManageWorkflows()) {
+        showToast("Workspace admin access is required to create workflow rules.", "warning");
+        return;
+      }
+      openWorkflowModal(null);
+    });
+  }
+
+  if (workflowRefreshBtn) {
+    workflowRefreshBtn.addEventListener("click", () => {
+      loadWorkflowRules().catch((error) => {
+        setWorkflowStatus(`Failed to load workflows: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (workflowModalClose) {
+    workflowModalClose.addEventListener("click", () => {
+      closeWorkflowModal();
+    });
+  }
+
+  if (workflowCancelBtn) {
+    workflowCancelBtn.addEventListener("click", () => {
+      closeWorkflowModal();
+    });
+  }
+
+  if (workflowModal) {
+    workflowModal.addEventListener("click", (event) => {
+      if (event.target === workflowModal) {
+        closeWorkflowModal();
+      }
+    });
+  }
+
+  if (workflowForm) {
+    workflowForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveWorkflowFromModal().catch((error) => {
+        setWorkflowModalStatus(`Save failed: ${error.message}`, true);
+      });
+    });
+  }
+
+  if (workflowRulesContainer) {
+    workflowRulesContainer.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const editBtn = event.target.closest(".workflow-edit-btn");
+      if (editBtn) {
+        const id = Number(editBtn.dataset.workflowId || 0);
+        const rule = workflowRulesCache.find((item) => Number(item.id || 0) === id);
+        if (rule) openWorkflowModal(rule);
+        return;
+      }
+      const deleteBtn = event.target.closest(".workflow-delete-btn");
+      if (deleteBtn) {
+        deleteWorkflowRule(deleteBtn.dataset.workflowId).catch((error) => {
+          setWorkflowStatus(`Delete failed: ${error.message}`, true);
+        });
+      }
+    });
+
+    workflowRulesContainer.addEventListener("change", (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (!event.target.classList.contains("workflow-enabled-toggle")) return;
+      const checkbox = event.target;
+      const id = checkbox.dataset.workflowId;
+      const enabled = checkbox.checked;
+      setWorkflowRuleEnabled(id, enabled)
+        .then(() => loadWorkflowRules())
+        .catch(() => {
+          checkbox.checked = !enabled;
+        });
+    });
+  }
 }
 
 async function loadUsers() {
@@ -1661,13 +2913,113 @@ function loadScript(src) {
   return promise;
 }
 
+function _buildStructuredTextHtml(text) {
+  // Parse plain text into a lightly structured, Word-like reading view.
+  const lines = (text || "(empty file)").split("\n");
+  let html = "";
+  let inList = false;
+  let listType = "";
+
+  const closeList = () => {
+    if (!inList) return;
+    html += listType === "numbered" ? "</ol>" : "</ul>";
+    inList = false;
+    listType = "";
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+
+    // Skip empty lines — add spacing.
+    if (!trimmed) {
+      closeList();
+      html += '<div class="preview-doc-spacer"></div>';
+      continue;
+    }
+
+    // Markdown-style headings (#, ##, ...)
+    const mdHeading = trimmed.match(/^(#{1,6})\s+(.+)/);
+    if (mdHeading) {
+      closeList();
+      const level = Math.min(6, mdHeading[1].length);
+      const tag = `h${level}`;
+      html += `<${tag} class="preview-doc-heading">${escapeHtml(mdHeading[2])}</${tag}>`;
+      continue;
+    }
+
+    // Horizontal rule-ish lines.
+    if (/^[-_=]{3,}$/.test(trimmed)) {
+      closeList();
+      html += '<hr class="preview-doc-hr" />';
+      continue;
+    }
+
+    // Numbered list items (1. or 1).
+    const listMatch = trimmed.match(/^(\d+)[.)]\s+(.+)/);
+    if (listMatch) {
+      if (!inList || listType !== "numbered") {
+        closeList();
+        html += `<ol class="preview-doc-list" start="${listMatch[1]}">`;
+        inList = true;
+        listType = "numbered";
+      }
+      html += "<li>" + escapeHtml(listMatch[2]) + "</li>";
+      continue;
+    }
+
+    // Bullet list items (-, *, •).
+    const bulletMatch = trimmed.match(/^[-*\u2022]\s+(.+)/);
+    if (bulletMatch) {
+      if (!inList || listType !== "bullets") {
+        closeList();
+        html += '<ul class="preview-doc-list">';
+        inList = true;
+        listType = "bullets";
+      }
+      html += "<li>" + escapeHtml(bulletMatch[1]) + "</li>";
+      continue;
+    }
+
+    closeList();
+
+    // Key: Value lines.
+    const kvMatch = trimmed.match(/^([A-Za-z][A-Za-z0-9 /&_-]{1,40}):\s+(.+)/);
+    if (kvMatch) {
+      html += '<div class="preview-doc-field"><span class="preview-doc-label">'
+        + escapeHtml(kvMatch[1]) + ':</span><span class="preview-doc-value">'
+        + escapeHtml(kvMatch[2]) + '</span></div>';
+      continue;
+    }
+
+    // First line or ALL-CAPS lines → heading.
+    const isHeading = (i === 0 && trimmed.length < 80)
+      || (trimmed === trimmed.toUpperCase() && trimmed.length > 3 && trimmed.length < 80 && /[A-Z]/.test(trimmed));
+    if (isHeading) {
+      const tag = (i === 0) ? "h1" : "h2";
+      html += '<' + tag + ' class="preview-doc-heading">' + escapeHtml(trimmed) + '</' + tag + '>';
+      continue;
+    }
+
+    // Regular paragraph.
+    html += '<p class="preview-doc-para">' + escapeHtml(trimmed) + '</p>';
+  }
+  closeList();
+  return html;
+}
+
 function renderTextPreview(text) {
   if (!docPreviewContainer) return;
-  const pre = document.createElement("pre");
-  pre.className = "preview-text";
-  pre.textContent = text || "(empty file)";
-  docPreviewContainer.innerHTML = "";
-  docPreviewContainer.appendChild(pre);
+  renderStructuredTextInto(docPreviewContainer, text);
+}
+
+function renderStructuredTextInto(container, text) {
+  if (!container) return;
+  container.innerHTML = "";
+  const page = document.createElement("div");
+  page.className = "preview-doc-page";
+  page.innerHTML = _buildStructuredTextHtml(text);
+  container.appendChild(page);
 }
 
 function renderPdfPreview(blobUrl) {
@@ -1737,6 +3089,8 @@ function renderImagePreview(blobUrl) {
 
 async function renderDocxPreview(blob) {
   if (!docPreviewContainer) return;
+  // docx-preview relies on JSZip in the browser.
+  await loadScript("https://unpkg.com/jszip@3.10.1/dist/jszip.min.js");
   await loadScript("https://unpkg.com/docx-preview@0.3.1/dist/docx-preview.min.js");
   const container = document.createElement("div");
   container.className = "preview-docx";
@@ -1745,7 +3099,21 @@ async function renderDocxPreview(blob) {
   if (!window.docx || typeof window.docx.renderAsync !== "function") {
     throw new Error("DOCX renderer failed to initialize.");
   }
-  await window.docx.renderAsync(blob, container);
+  await window.docx.renderAsync(blob, container, null, {
+    // Keep the "paper" wrapper and page sizes.
+    inWrapper: true,
+    ignoreWidth: false,
+    ignoreHeight: false,
+    // Prefer proper paging when MS Word inserts <w:lastRenderedPageBreak/>.
+    breakPages: true,
+    ignoreLastRenderedPageBreak: false,
+    // Render more document structure.
+    renderHeaders: true,
+    renderFooters: true,
+    renderFootnotes: true,
+    renderEndnotes: true,
+    renderAltChunks: true,
+  });
 }
 
 async function renderXlsxPreview(blob) {
@@ -1991,9 +3359,6 @@ function renderReviewDocument(doc, auditItems) {
   }
   reviewNotes.value = doc.reviewer_notes || "";
 
-  const defaultFields = doc.extracted_fields && typeof doc.extracted_fields === "object" ? doc.extracted_fields : {};
-  reviewFieldsJson.value = JSON.stringify(defaultFields, null, 2);
-
   // Detail header
   const overdue = isDocumentOverdue(doc);
   const statusText = overdue
@@ -2050,16 +3415,20 @@ function renderReviewDocument(doc, auditItems) {
   if (reviewErrorsSection) reviewErrorsSection.style.display = hasErrors ? "block" : "none";
   reviewMissing.textContent = lineList(doc.missing_fields);
   reviewErrors.textContent = lineList(doc.validation_errors);
-
-  reviewAudit.textContent = auditToText(auditItems);
   reviewStatus.textContent = "";
 
   // Populate Document tab
   _currentDocForDocTab = doc;
+  const extractedText = doc.extracted_text ? doc.extracted_text.slice(0, 8000) : "";
   if (docTextPreview) {
-    docTextPreview.textContent = doc.extracted_text
-      ? doc.extracted_text.slice(0, 8000)
-      : "No extracted text available.";
+    docTextPreview.textContent = extractedText || "No extracted text available.";
+  }
+  if (docTextRender) {
+    if (extractedText) {
+      renderStructuredTextInto(docTextRender, extractedText);
+    } else {
+      docTextRender.innerHTML = '<div class="preview-empty">No extracted text available.</div>';
+    }
   }
   renderFieldsEditor(doc.extracted_fields, doc.missing_fields);
   if (docReuploadStatus) docReuploadStatus.textContent = "";
@@ -2083,16 +3452,17 @@ function clearReviewSelection(message) {
   reviewDocType.value = "";
   reviewDepartment.value = "";
   reviewNotes.value = "";
-  reviewFieldsJson.value = "{}";
   reviewMissing.textContent = "-";
   reviewErrors.textContent = "-";
-  reviewAudit.textContent = "-";
   reviewStatus.textContent = "";
 
   // Clear Document tab state
   _currentDocForDocTab = null;
   _originalFields = {};
   if (docTextPreview) docTextPreview.textContent = "-";
+  if (docTextRender) {
+    docTextRender.innerHTML = '<div class="preview-empty">No extracted text available.</div>';
+  }
   if (docFieldsEditor) docFieldsEditor.innerHTML = "";
   if (docReuploadStatus) docReuploadStatus.textContent = "";
   if (docFieldsStatus) docFieldsStatus.textContent = "";
@@ -2521,7 +3891,6 @@ async function loadRulesConfig() {
   populateDocTypeOptions(activeRules);
   renderRulesBuilder(activeRules);
   rulesMeta.textContent = `Source: ${data.source} | Path: ${data.path}`;
-  rulesJson.value = JSON.stringify(activeRules, null, 2);
   rulesStatus.textContent = `Loaded ${Object.keys(activeRules).length} document type rules.`;
 }
 
@@ -2544,7 +3913,6 @@ async function saveRulesConfig() {
     populateDocTypeOptions(activeRules);
     renderRulesBuilder(activeRules);
     rulesMeta.textContent = `Source: ${updated.source} | Path: ${updated.path}`;
-    rulesJson.value = JSON.stringify(activeRules, null, 2);
     rulesStatus.textContent = "Rules saved. New uploads now use this rule set.";
     showToast("Rules saved successfully", "success");
     await loadAll();
@@ -2566,27 +3934,12 @@ async function resetRulesConfig() {
     populateDocTypeOptions(activeRules);
     renderRulesBuilder(activeRules);
     rulesMeta.textContent = `Source: ${updated.source} | Path: ${updated.path}`;
-    rulesJson.value = JSON.stringify(activeRules, null, 2);
     rulesStatus.textContent = "Rules reset to defaults.";
     showToast("Rules reset to defaults", "info");
     await loadAll();
   } catch (error) {
     rulesStatus.textContent = `Failed to reset rules: ${error.message}`;
     showToast("Failed to reset rules: " + error.message, "error");
-  }
-}
-
-function applyJsonToBuilder() {
-  try {
-    const parsed = JSON.parse(rulesJson.value || "{}");
-    const coerced = coerceRuleSet(parsed);
-    activeRules = coerced;
-    renderRulesBuilder(activeRules);
-    populateDocTypeOptions(activeRules);
-    rulesJson.value = JSON.stringify(activeRules, null, 2);
-    rulesStatus.textContent = "JSON applied to form editor.";
-  } catch (error) {
-    rulesStatus.textContent = `Could not apply JSON: ${error.message}`;
   }
 }
 
@@ -2603,7 +3956,6 @@ function addNewRuleType() {
   activeRules = ensureOtherRule(current);
   renderRulesBuilder(activeRules);
   populateDocTypeOptions(activeRules);
-  rulesJson.value = JSON.stringify(activeRules, null, 2);
   rulesStatus.textContent = `Added ${nextKey}. Fill it out and click Save Rules.`;
 
   const newRow = rulesBuilder.querySelector(`[data-rule-row="${escapeHtml(nextKey)}"]`);
@@ -3190,10 +4542,6 @@ function bindRulesActions() {
     resetRulesConfig();
   });
 
-  rulesApplyJson.addEventListener("click", () => {
-    applyJsonToBuilder();
-  });
-
   rulesBuilder.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -3206,7 +4554,6 @@ function bindRulesActions() {
       const editor = row.nextElementSibling;
       if (editor && editor.classList.contains("rule-required-editor")) editor.remove();
       row.remove();
-      syncJsonFromBuilder(false);
       return;
     }
 
@@ -3240,15 +4587,12 @@ function bindRulesActions() {
       const inlineInput = editorRow.querySelector(".rule-required-inline");
       inlineInput.addEventListener("input", () => {
         hiddenInput.value = inlineInput.value;
-        syncJsonFromBuilder(false);
       });
       inlineInput.focus();
     }
   });
 
-  rulesBuilder.addEventListener("input", () => {
-    syncJsonFromBuilder(false);
-  });
+  // No JSON editor to keep in sync; builder state is read on Save.
 }
 
 /* ── Detail-pane tab & Document tab bindings ─────── */
@@ -3844,25 +5188,11 @@ reviewForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  let correctedFields = {};
-  const rawFields = reviewFieldsJson.value.trim();
-  if (rawFields) {
-    try {
-      correctedFields = JSON.parse(rawFields);
-      if (!correctedFields || typeof correctedFields !== "object" || Array.isArray(correctedFields)) {
-        throw new Error("Corrected fields must be a JSON object");
-      }
-    } catch (error) {
-      reviewStatus.textContent = `Corrected fields JSON is invalid: ${error.message}`;
-      return;
-    }
-  }
-
   const payload = {
     approve: true,
     corrected_doc_type: reviewDocType.value || null,
     corrected_department: reviewDepartment.value || null,
-    corrected_fields: correctedFields,
+    corrected_fields: {},
     notes: reviewNotes.value || null,
     actor: "dashboard_reviewer",
   };
@@ -4052,6 +5382,7 @@ bindPageRouting();
 bindDocumentClicks();
 bindConnectors();
 bindRulesActions();
+bindWorkflows();
 bindPlatformActions();
 bindEmailPreferences();
 bindAdminDashboard();
@@ -4124,10 +5455,12 @@ if (shortcutsCloseBtn) {
 (async () => {
   await loadCurrentUser();
   await loadWorkspaces();
+  await loadWorkflowPresets();
   refreshAdminPageIfActive();
   await Promise.all([loadUsers(), loadEmailPreferences()]);
   await Promise.all([loadAll(), loadRulesConfig(), loadPlatformSummary(), loadNotifications()]);
   startNotificationPolling();
+  refreshWorkflowsPageIfActive();
 
   // Deep-link: auto-select a document if ?doc=ID is present
   const docParam = new URLSearchParams(window.location.search).get("doc");

@@ -60,6 +60,12 @@
   --danger-bg: #fef2f2;
   --danger-line: #fecaca;
   --danger-ink: #b91c1c;
+
+  /* Layout */
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --control-height: 2.375rem;
 }
 
 html[data-theme="dark"] {
@@ -613,19 +619,20 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
 /* ── Toolbar ─────────────────────────────────────── */
 
 .app-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
 .toolbar-search {
   flex: 1;
+  min-width: 0;
 }
 
 .toolbar-search input[type="search"] {
-  height: 2.375rem;
+  height: var(--control-height);
   background: var(--surface);
   border-color: var(--line);
   font-size: 0.875rem;
@@ -641,6 +648,7 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
   min-width: 5rem;
   font-size: 0.8125rem;
   padding: 0.5rem 0.75rem;
+  height: var(--control-height);
 }
 
 /* ── Breadcrumb ──────────────────────────────────── */
@@ -681,6 +689,7 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--line);
   background: var(--surface);
+  border-radius: var(--radius-md);
   font-size: 0.8125rem;
   color: var(--ink-soft);
 }
@@ -697,6 +706,7 @@ html[data-theme="dark"] .theme-icon-moon { display: none; }
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-lg);
   padding: 1.25rem 1.5rem;
   display: flex;
   align-items: flex-start;
@@ -766,14 +776,16 @@ h1 {
 }
 
 .topbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.375rem;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
 }
 
 .topbar-actions button {
-  min-width: 7rem;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
 }
 
 .topbar-actions .secondary {
@@ -784,6 +796,10 @@ h1 {
   background: var(--primary-btn-bg);
   border-color: var(--primary-btn-bg);
   color: var(--primary-btn-text);
+}
+
+.topbar-actions #refresh {
+  grid-column: 1 / -1;
 }
 
 .hero-updated {
@@ -850,6 +866,7 @@ h1 {
   border: 1px solid var(--line);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-lg);
   padding: 1.25rem;
   animation: panel-fade-in 350ms ease both;
 }
@@ -900,6 +917,7 @@ h1 {
 
 .connectors-panel,
 .rules-panel,
+.workflows-panel,
 .admin-panel {
   grid-column: span 12;
 }
@@ -977,6 +995,265 @@ h1 {
   border-bottom: 1px solid var(--line);
   margin-bottom: 0.75rem;
   overflow-x: auto;
+}
+
+/* ── Workflow automations UI ─────────────────────── */
+
+.workflow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.workflow-preset-picker {
+  min-width: min(520px, 100%);
+  flex: 1 1 420px;
+}
+
+.workflow-preset-picker label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.workflow-preset-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workflow-preset-row select {
+  flex: 1;
+}
+
+.workflow-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.workflow-rules {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.workflow-rule-card {
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  border-radius: 12px;
+  padding: 0.75rem 0.875rem;
+}
+
+.workflow-rule-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.workflow-rule-title {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.workflow-rule-title strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.workflow-rule-meta {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.25;
+}
+
+.workflow-rule-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.workflow-rule-actions .pref-item {
+  padding: 0.4rem 0.55rem;
+  background: var(--surface);
+}
+
+.workflow-rule-body {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.workflow-rule-kv {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8125rem;
+}
+
+.workflow-rule-kv span {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.workflow-rule-kv code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.workflow-form textarea {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
+.workflow-mode-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.workflow-mode-tab {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.5rem 0.875rem;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workflow-mode-tab.active {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.workflow-mode-panel {
+  display: none;
+}
+
+.workflow-mode-panel.active {
+  display: block;
+}
+
+.workflow-builder-section {
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  border-radius: 12px;
+  padding: 0.75rem 0.875rem;
+  margin-bottom: 0.75rem;
+}
+
+.workflow-builder-section h4 {
+  margin: 0 0 0.65rem;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.workflow-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 0.85rem;
+}
+
+.workflow-field label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 0.35rem;
+}
+
+.workflow-field .hint {
+  margin: 0.3rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.workflow-actions-builder {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.workflow-add-action {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 0.75rem;
+}
+
+.workflow-add-action select {
+  flex: 1;
+}
+
+.workflow-action-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.75rem 0.875rem;
+}
+
+.workflow-action-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.workflow-action-head strong {
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.workflow-action-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.workflow-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 0.85rem;
+  margin-top: 0.65rem;
+}
+
+.workflow-action-grid .workflow-field {
+  margin: 0;
+}
+
+.workflow-action-grid .workflow-field.full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 920px) {
+  .workflow-filter-grid,
+  .workflow-action-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .admin-tab {
@@ -1240,6 +1517,7 @@ textarea {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
+  border-radius: var(--radius-md);
   padding: 0.5625rem 0.75rem;
   font-size: 0.875rem;
   transition: border-color 140ms ease, box-shadow 140ms ease;
@@ -1295,10 +1573,14 @@ button {
   border: 1px solid var(--primary-btn-bg);
   background: var(--primary-btn-bg);
   color: var(--primary-btn-text);
+  border-radius: var(--radius-md);
   font-size: 0.8125rem;
   font-weight: 600;
   padding: 0.5rem 0.875rem;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: filter 120ms ease, transform 80ms ease, box-shadow 120ms ease;
 }
 
@@ -2066,14 +2348,95 @@ button:disabled {
   font-size: 0.8125rem;
 }
 
-.preview-text {
-  margin: 0;
-  max-height: 32rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
-  font-size: 0.8125rem;
+/* Structured document rendering (used by Preview + Extracted OCR text) */
+.preview-doc-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 1.5rem 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+}
+
+.preview-doc-heading {
+  margin: 0.25rem 0 0.75rem;
+  letter-spacing: -0.01em;
+}
+
+h1.preview-doc-heading {
+  font-size: 1.55rem;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+h2.preview-doc-heading {
+  font-size: 1.1rem;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 1.1rem;
+}
+
+h3.preview-doc-heading,
+h4.preview-doc-heading,
+h5.preview-doc-heading,
+h6.preview-doc-heading {
+  font-size: 0.95rem;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 1rem;
+}
+
+.preview-doc-para {
+  margin: 0.55rem 0;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+
+.preview-doc-spacer {
+  height: 0.85rem;
+}
+
+.preview-doc-hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1rem 0;
+}
+
+.preview-doc-field {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.4rem 0;
+  border-bottom: 1px dashed rgba(216, 222, 232, 0.9);
+}
+
+.preview-doc-label {
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.preview-doc-value {
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.preview-doc-list {
+  margin: 0.55rem 0 0.75rem 1.4rem;
+  padding: 0;
+}
+
+.preview-doc-list li {
+  margin: 0.25rem 0;
+  line-height: 1.55;
+  font-size: 0.95rem;
 }
 
 .preview-pdf-frame {
@@ -2109,8 +2472,22 @@ button:disabled {
   max-height: 600px;
   overflow: auto;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface-muted);
   padding: 0.75rem;
+}
+
+.preview-docx .docx-wrapper {
+  padding: 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.preview-docx .docx-wrapper > section {
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
 }
 
 .preview-xlsx table {
@@ -2154,6 +2531,26 @@ button:disabled {
 /* Extracted text preview */
 .doc-text-section {
   margin-bottom: 1rem;
+}
+
+.doc-text-render {
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  padding: 0.75rem;
+  min-height: 4rem;
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.doc-text-raw {
+  margin-top: 0.5rem;
+}
+
+.doc-text-raw summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+  user-select: none;
 }
 
 .doc-text-block {
@@ -2487,24 +2884,6 @@ button:disabled {
   opacity: 1;
 }
 
-.review-advanced {
-  margin-top: 0.625rem;
-}
-
-.rules-advanced {
-  margin-top: 0.75rem;
-  border: 1px dashed var(--line);
-  padding: 0.875rem;
-  background: var(--surface-muted);
-}
-
-.rules-advanced summary {
-  cursor: pointer;
-  font-weight: 620;
-  color: var(--ink);
-  font-size: 0.875rem;
-}
-
 /* ── Tables ──────────────────────────────────────── */
 
 .table-scroll {
@@ -2722,6 +3101,7 @@ tbody tr.is-selected {
   overflow: auto;
   border: 1px solid var(--line);
   background: var(--surface);
+  border-radius: var(--radius-lg);
   padding: 1.25rem 1.5rem;
   display: grid;
   gap: 0.5rem;
@@ -2828,8 +3208,7 @@ tbody tr.is-selected {
   }
 
   .app-toolbar {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: 1fr;
   }
 
   .toolbar-actions {
@@ -2960,6 +3339,14 @@ tbody tr.is-selected {
   .toolbar-actions {
     width: 100%;
     justify-content: stretch;
+  }
+
+  .topbar-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-actions #refresh {
+    grid-column: auto;
   }
 
   .toolbar-actions button,

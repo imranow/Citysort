@@ -105,6 +105,26 @@ def process_document_by_id(
         except Exception:
             pass  # Auto-email failure must not block pipeline.
 
+        # --- Workflow automations (never block pipeline) ---
+        try:
+            from .workflows import run_workflows_for_document
+
+            workspace_id = document.get("workspace_id")
+            run_workflows_for_document(
+                trigger_event="document_processed",
+                document_id=document_id,
+                actor=actor,
+                workspace_id=str(workspace_id) if workspace_id else None,
+            )
+            run_workflows_for_document(
+                trigger_event=f"document_{final_status}",
+                document_id=document_id,
+                actor=actor,
+                workspace_id=str(workspace_id) if workspace_id else None,
+            )
+        except Exception:
+            pass  # Workflow failure must not block pipeline.
+
     except Exception as exc:  # pragma: no cover - runtime safeguard
         update_document(
             document_id, updates={"status": "failed", "requires_review": True}

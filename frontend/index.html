@@ -82,7 +82,7 @@
       @media (max-width:1320px) { .upload-panel,.metrics-panel,.queue-summary-panel,.review-summary-panel { grid-column:span 12; } }
       @media (max-width:1040px) { .app-shell { grid-template-columns:1fr; } html,body { font-size:14px; } .app-toolbar { flex-direction:column; } }
     </style>
-    <link rel="stylesheet" href="/static/styles.v2.css?v=20260212b" />
+    <link rel="stylesheet" href="/static/styles.v2.css?v=20260212c" />
   </head>
   <body>
     <div class="app-shell">
@@ -125,6 +125,7 @@
         <div class="sidebar-group">
           <p class="sidebar-label">Manage</p>
           <a href="/app?page=rules" class="sidebar-link" data-page="rules"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h12"/><path d="M2 8h12"/><path d="M2 13h12"/><circle cx="5" cy="3" r="1.5" fill="var(--surface)" /><circle cx="11" cy="8" r="1.5" fill="var(--surface)" /><circle cx="7" cy="13" r="1.5" fill="var(--surface)" /></svg><span>Routing Rules</span></a>
+          <a href="/app?page=workflows" class="sidebar-link" data-page="workflows"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h8"/><path d="M4 8h8"/><path d="M4 13h8"/><path d="M2.5 3h.5"/><path d="M2.5 8h.5"/><path d="M2.5 13h.5"/></svg><span>Automations</span></a>
           <a href="/app?page=connectors" class="sidebar-link" data-page="connectors"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3H3v4h3M10 3h3v4h-3M6 5h4M6 9H3v4h3M10 9h3v4h-3M6 11h4"/></svg><span>Connectors</span></a>
           <a href="/app?page=admin" class="sidebar-link" data-page="admin"><svg class="link-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2.5h10v11H3z"/><path d="M6 5.5h4M6 8h4M6 10.5h4"/></svg><span>Admin</span></a>
         </div>
@@ -213,6 +214,7 @@
           <a href="/app?page=upload" class="tab" data-page="upload">Ingestion</a>
           <a href="/app?page=queues" class="tab" data-page="queues">Document Review</a>
           <a href="/app?page=rules" class="tab" data-page="rules">Routing Rules</a>
+          <a href="/app?page=workflows" class="tab" data-page="workflows">Automations</a>
           <a href="/app?page=connectors" class="tab" data-page="connectors">Connectors</a>
           <a href="/app?page=admin" class="tab" data-page="admin">Admin</a>
         </nav>
@@ -389,36 +391,6 @@ FROM documents_to_ingest</textarea>
                       <span class="choice-desc">Your query returns file paths on this server.</span>
                     </label>
                   </div>
-
-                  <details class="rules-advanced">
-                    <summary>Advanced Mapping</summary>
-                    <div class="connector-fields-grid">
-                      <div class="connector-field">
-                        <label for="connector-filename-col">Filename Column</label>
-                        <input id="connector-filename-col" type="text" value="filename" />
-                      </div>
-                      <div class="connector-field">
-                        <label for="connector-content-col">Content Column</label>
-                        <input id="connector-content-col" type="text" value="content" />
-                      </div>
-                      <div class="connector-field">
-                        <label for="connector-path-col">File Path Column</label>
-                        <input id="connector-path-col" type="text" placeholder="file_path" />
-                      </div>
-                      <div class="connector-field">
-                        <label for="connector-content-type-col">Content-Type Column</label>
-                        <input id="connector-content-type-col" type="text" value="content_type" />
-                      </div>
-                      <div class="connector-field">
-                        <label for="connector-limit">Row Limit</label>
-                        <input id="connector-limit" type="number" min="1" max="5000" value="500" />
-                      </div>
-                    </div>
-                    <label class="check-inline" for="connector-process-async">
-                      <input id="connector-process-async" type="checkbox" />
-                      Process in background (recommended for large imports)
-                    </label>
-                  </details>
                 </div>
 
                 <div class="actions connector-actions">
@@ -618,15 +590,6 @@ FROM documents_to_ingest</textarea>
                       </div>
                       <div id="transition-actions" class="transition-actions"></div>
 
-                      <details class="rules-advanced review-advanced">
-                        <summary>Advanced Details</summary>
-
-                        <label for="review-fields-json">Corrected Fields (JSON)</label>
-                        <textarea id="review-fields-json" rows="5" spellcheck="false">{}</textarea>
-
-                        <label for="review-audit">Audit Trail</label>
-                        <pre id="review-audit" class="mono-block">-</pre>
-                      </details>
                     </form>
                     <p id="review-status" class="status"></p>
                   </div>
@@ -642,7 +605,13 @@ FROM documents_to_ingest</textarea>
 
                     <div class="doc-text-section">
                       <label>Extracted Text (OCR)</label>
-                      <pre id="doc-text-preview" class="mono-block doc-text-block">-</pre>
+                      <div id="doc-text-render" class="doc-text-render">
+                        <div class="preview-empty">No extracted text available.</div>
+                      </div>
+                      <details class="doc-text-raw">
+                        <summary>Show raw OCR text</summary>
+                        <pre id="doc-text-preview" class="mono-block doc-text-block">-</pre>
+                      </details>
                     </div>
 
                     <div class="doc-fields-section">
@@ -686,15 +655,34 @@ FROM documents_to_ingest</textarea>
               </div>
             </div>
 
-            <details class="rules-advanced">
-              <summary>JSON Editor</summary>
-              <div class="actions">
-                <button type="button" id="rules-apply-json" class="secondary">Apply JSON To Form</button>
-              </div>
-              <label for="rules-json">Rules JSON</label>
-              <textarea id="rules-json" rows="10" spellcheck="false">{}</textarea>
-            </details>
             <p id="rules-status" class="status"></p>
+          </section>
+
+          <section class="panel workflows-panel" data-pages="workflows">
+            <div class="section-head">
+              <h2>Automations</h2>
+              <p>Workspace-scoped workflow rules</p>
+            </div>
+
+            <div class="workflow-toolbar">
+              <div class="workflow-preset-picker">
+                <label for="workflow-preset-select">Preset library</label>
+                <div class="workflow-preset-row">
+                  <select id="workflow-preset-select" aria-label="Select a workflow preset"></select>
+                  <button type="button" id="workflow-preset-apply" class="secondary">Apply Preset</button>
+                </div>
+                <p id="workflow-preset-description" class="status"></p>
+              </div>
+              <div class="workflow-actions">
+                <button type="button" id="workflow-new-btn">New Rule</button>
+                <button type="button" id="workflow-refresh-btn" class="secondary">Refresh</button>
+              </div>
+            </div>
+
+            <div id="workflow-rules" class="workflow-rules">
+              <div class="preview-empty">Loading workflow rules...</div>
+            </div>
+            <p id="workflow-status" class="status"></p>
           </section>
 
           <section class="panel admin-panel" data-pages="admin">
@@ -781,6 +769,10 @@ FROM documents_to_ingest</textarea>
             title: "Admin",
             subtitle: "System administration across users, billing, operations health, and audit activity.",
           },
+          workflows: {
+            title: "Automations",
+            subtitle: "Configure workspace-specific workflow rules and apply starter presets for common government and business processes.",
+          },
         };
 
         const searchParams = new URLSearchParams(window.location.search);
@@ -824,6 +816,89 @@ FROM documents_to_ingest</textarea>
         });
       })();
     </script>
+    <div id="workflow-modal" class="response-modal" hidden>
+      <div class="response-modal-card workflow-modal-card">
+        <div class="response-modal-head">
+          <h3 id="workflow-modal-title">Workflow Rule</h3>
+          <button type="button" id="workflow-modal-close" class="secondary">Close</button>
+        </div>
+        <form id="workflow-form" class="workflow-form">
+          <label for="workflow-name">Name</label>
+          <input id="workflow-name" type="text" placeholder="e.g., Auto-assign permits on needs_review" required />
+
+          <div class="workflow-inline">
+            <label class="pref-item workflow-enabled">
+              <input id="workflow-enabled" type="checkbox" checked />
+              Enabled
+            </label>
+          </div>
+
+          <label for="workflow-trigger">Trigger Event</label>
+          <select id="workflow-trigger"></select>
+
+          <div class="workflow-builder-section">
+            <h4>Filters</h4>
+            <div class="workflow-filter-grid">
+              <div class="workflow-field">
+                <label for="workflow-filter-doc-type">Doc type(s)</label>
+                <input id="workflow-filter-doc-type" type="text" placeholder="building_permit, complaint" />
+                <p class="status hint">Comma-separated. Leave blank for any.</p>
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-department">Department(s)</label>
+                <input id="workflow-filter-department" type="text" placeholder="City Clerk, Building Department" />
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-status">Status(es)</label>
+                <input id="workflow-filter-status" type="text" placeholder="needs_review, routed" />
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-urgency">Urgency</label>
+                <select id="workflow-filter-urgency">
+                  <option value="">Any</option>
+                  <option value="normal">normal</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-source">Source channel(s)</label>
+                <input id="workflow-filter-source" type="text" placeholder="upload_portal, connectors" />
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-min-confidence">Min confidence</label>
+                <input id="workflow-filter-min-confidence" type="number" min="0" max="0.99" step="0.01" placeholder="0.82" />
+              </div>
+              <div class="workflow-field">
+                <label for="workflow-filter-max-confidence">Max confidence</label>
+                <input id="workflow-filter-max-confidence" type="number" min="0" max="0.99" step="0.01" placeholder="0.99" />
+              </div>
+            </div>
+          </div>
+
+          <div class="workflow-builder-section">
+            <h4>Actions</h4>
+            <div id="workflow-actions-builder" class="workflow-actions-builder"></div>
+            <div class="workflow-add-action">
+              <select id="workflow-action-type">
+                <option value="assign">Assign</option>
+                <option value="send_template_email">Send Template Email</option>
+                <option value="create_notification">Create Notification</option>
+                <option value="webhook_post">Webhook POST</option>
+                <option value="transition">Transition Status</option>
+              </select>
+              <button type="button" id="workflow-action-add" class="secondary">Add Action</button>
+            </div>
+            <p class="status hint">Tokens you can use: {{filename}}, {{doc_type}}, {{department}}, {{status}}, {{urgency}}, {{confidence}}, {{due_date}}</p>
+          </div>
+
+          <p class="status" id="workflow-modal-status"></p>
+          <div class="actions">
+            <button type="submit" id="workflow-save-btn">Save Rule</button>
+            <button type="button" id="workflow-cancel-btn" class="secondary">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
     <div id="response-modal" class="response-modal" hidden>
       <div class="response-modal-card">
         <div class="response-modal-head">
@@ -866,6 +941,6 @@ FROM documents_to_ingest</textarea>
       </div>
     </div>
     <div id="toast-container" class="toast-container" aria-live="polite"></div>
-    <script src="/static/app.v2.js?v=20260212d"></script>
+    <script src="/static/app.v2.js?v=20260212f"></script>
   </body>
 </html>

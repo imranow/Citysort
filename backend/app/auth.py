@@ -269,11 +269,113 @@ def authorize_request(
     normalized_required_role = _normalize_role(required_role)
 
     if not REQUIRE_AUTH:
-        return {
+        # In local/dev mode we still want a stable user + workspace context so
+        # workspace-scoped features (multi-tenant, workflows, templates, etc.)
+        # are usable without setting up auth flows.
+
+        # If a token or API key is provided, prefer it (best effort) so
+        # workspace switching continues to work even when REQUIRE_AUTH=false.
+        if request is not None:
+            auth_header = request.headers.get("authorization", "").strip()
+            api_key_header = request.headers.get("x-api-key", "").strip()
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+                try:
+                    if allow_api_key and token.startswith("cs_"):
+                        identity = _authenticate_from_api_key(token)
+                    else:
+                        identity = _authenticate_from_token(token)
+                    if not role_allows(
+                        identity.get("role", "viewer"), normalized_required_role
+                    ):
+                        raise HTTPException(
+                            status_code=403, detail="Insufficient role permissions."
+                        )
+                    return identity
+                except HTTPException:
+                    pass
+            elif allow_api_key and api_key_header:
+                try:
+                    identity = _authenticate_from_api_key(api_key_header)
+                    if not role_allows(
+                        identity.get("role", "viewer"), normalized_required_role
+                    ):
+                        raise HTTPException(
+                            status_code=403, detail="Insufficient role permissions."
+                        )
+                    return identity
+                except HTTPException:
+                    pass
+
+        # Fallback: pick (or create) an admin user and default workspace.
+        user = None
+        for candidate in list_users(limit=50):
+            if str(candidate.get("status", "")).lower() != "active":
+                continue
+            if str(candidate.get("role", "")).lower() == "admin":
+                user = get_user_by_id(str(candidate["id"])) or candidate
+                break
+        if user is None:
+            candidates = list_users(limit=1)
+            if candidates:
+                user = get_user_by_id(str(candidates[0]["id"])) or candidates[0]
+
+        if user is None:
+            dev_email = "dev@citysort.local"
+            user = get_user_by_email(dev_email) or None
+            if user is None:
+                try:
+                    user = create_user(
+                        email=dev_email,
+                        full_name="Local Development User",
+                        password_hash=hash_password("DevPass12345!"),
+                        role="admin",
+                        plan_tier="enterprise",
+                    )
+                except Exception:
+                    user = get_user_by_email(dev_email) or {
+                        "id": dev_email,
+                        "email": dev_email,
+                        "full_name": "Local Development User",
+                        "role": "admin",
+                        "status": "active",
+                        "plan_tier": "enterprise",
+                    }
+
+        if not user:
+            return {"auth_type": "disabled", "actor": "system", "role": "admin"}
+
+        default_workspace = get_default_workspace_for_user(str(user.get("id", "")))
+        if not default_workspace:
+            workspace = create_workspace(
+                name="Dev Workspace",
+                owner_id=str(user["id"]),
+                plan_tier=str(user.get("plan_tier") or "free"),
+            )
+            default_workspace = {"id": workspace.get("id")}
+
+        workspace_id = (
+            str(default_workspace.get("id")) if default_workspace.get("id") else None
+        )
+        workspace_role = None
+        if workspace_id:
+            workspace_role = repository_get_workspace_role(
+                str(user.get("id", "")), workspace_id
+            )
+
+        identity = {
             "auth_type": "disabled",
-            "actor": "system",
-            "role": "admin",
+            "actor": user.get("email", "system"),
+            "role": user.get("role", "admin"),
+            "user": user,
+            "workspace_id": workspace_id,
+            "workspace_role": workspace_role or "admin",
         }
+        if not role_allows(identity.get("role", "viewer"), normalized_required_role):
+            raise HTTPException(
+                status_code=403, detail="Insufficient role permissions."
+            )
+        return identity
 
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
